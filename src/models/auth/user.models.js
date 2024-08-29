@@ -2,16 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import mongoose, { Schema } from "mongoose";
-import {
-  AvailableSocialLogins,
-  AvailableUserRoles,
-  USER_TEMPORARY_TOKEN_EXPIRY,
-  UserLoginType,
-  UserRolesEnum,
-} from "../../../constants.js";
-import { Cart } from "../ecommerce/cart.models.js";
-import { EcomProfile } from "../ecommerce/profile.models.js";
-import { SocialProfile } from "../social-media/profile.models.js";
+import { AvailableUserRoles, UserRolesEnum } from "../../constants.js";
 
 const userSchema = new Schema(
   {
@@ -50,11 +41,7 @@ const userSchema = new Schema(
       type: String,
       required: [true, "Password is required"],
     },
-    loginType: {
-      type: String,
-      enum: AvailableSocialLogins,
-      default: UserLoginType.EMAIL_PASSWORD,
-    },
+
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -81,35 +68,6 @@ const userSchema = new Schema(
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
   this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
-
-userSchema.post("save", async function (user, next) {
-  // ! Generally, querying data on every user save is not a good idea and not necessary when you are working on a specific application which has concrete models which are tightly coupled
-  // ! However, in this application this user model is being referenced in many loosely coupled models so we need to do some initial setups before proceeding to make sure the data consistency and integrity
-  const ecomProfile = await EcomProfile.findOne({ owner: user._id });
-  const socialProfile = await SocialProfile.findOne({ owner: user._id });
-  const cart = await Cart.findOne({ owner: user._id });
-
-  // Setup necessary ecommerce models for the user
-  if (!ecomProfile) {
-    await EcomProfile.create({
-      owner: user._id,
-    });
-  }
-  if (!cart) {
-    await Cart.create({
-      owner: user._id,
-      items: [],
-    });
-  }
-
-  // Setup necessary social media models for the user
-  if (!socialProfile) {
-    await SocialProfile.create({
-      owner: user._id,
-    });
-  }
   next();
 });
 
@@ -154,9 +112,8 @@ userSchema.methods.generateTemporaryToken = function () {
     .update(unHashedToken)
     .digest("hex");
   // This is the expiry time for the token (20 minutes)
-  const tokenExpiry = Date.now() + USER_TEMPORARY_TOKEN_EXPIRY;
 
-  return { unHashedToken, hashedToken, tokenExpiry };
+  return { unHashedToken, hashedToken };
 };
 
 export const User = mongoose.model("User", userSchema);

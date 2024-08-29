@@ -3,12 +3,12 @@ import {
   deleteMessage,
   getAllMessages,
   sendMessage,
-} from "../../../controllers/apps/chat-app/message.controllers.js";
-import { verifyJWT } from "../../../middlewares/auth.middlewares.js";
-import { upload } from "../../../middlewares/multer.middlewares.js";
-import { sendMessageValidator } from "../../../validators/apps/chat-app/message.validators.js";
-import { mongoIdPathVariableValidator } from "../../../validators/common/mongodb.validators.js";
-import { validate } from "../../../validators/validate.js";
+} from "../controllers/message.controllers.js";
+import { verifyJWT } from "../middlewares/auth.middlewares.js";
+import { upload } from "../middlewares/multer.middlewares.js";
+import { sendMessageValidator } from "../validators/message.validator.js";
+import { mongoIdPathVariableValidator } from "../validators/mongodb.validators.js";
+import { validate } from "../validators/validate.js";
 
 const router = Router();
 
