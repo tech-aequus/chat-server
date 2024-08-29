@@ -7,8 +7,10 @@ import fs from "fs";
 import { createServer } from "http";
 import passport from "passport";
 import path from "path";
+import { fileURLToPath } from "url";
 import requestIp from "request-ip";
 import { Server } from "socket.io";
+import YAML from "yaml";
 import swaggerUi from "swagger-ui-express";
 import { DB_NAME } from "./constants.js";
 import { dbInstance } from "./db/index.js";
@@ -20,6 +22,16 @@ import { avoidInProduction } from "./middlewares/auth.middlewares.js";
 const app = express();
 
 const httpServer = createServer(app);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const file = fs.readFileSync(path.resolve(__dirname, "./swagger.yaml"), "utf8");
+const swaggerDocument = YAML.parse(
+  file?.replace(
+    "- url: ${{server}}",
+    `- url: ${process.env.FREEAPI_HOST_URL || "http://localhost:8080"}/api/v1`
+  )
+);
 
 const io = new Server(httpServer, {
   pingTimeout: 60000,

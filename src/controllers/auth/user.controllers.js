@@ -10,6 +10,11 @@ import {
   getStaticFilePath,
   removeLocalFile,
 } from "../../utils/helpers.js";
+import {
+  emailVerificationMailgenContent,
+  forgotPasswordMailgenContent,
+  sendEmail,
+} from "../../utils/mail.js";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -65,6 +70,17 @@ const registerUser = asyncHandler(async (req, res) => {
   user.emailVerificationExpiry = tokenExpiry;
   await user.save({ validateBeforeSave: false });
 
+  await sendEmail({
+    email: user?.email,
+    subject: "Please verify your email",
+    mailgenContent: emailVerificationMailgenContent(
+      user.username,
+      `${req.protocol}://${req.get(
+        "host"
+      )}/api/v1/users/verify-email/${unHashedToken}`
+    ),
+  });
+
   const createdUser = await User.findById(user._id).select(
     "-password -refreshToken -emailVerificationToken -emailVerificationExpiry"
   );
@@ -99,17 +115,17 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new ApiError(404, "User does not exist");
   }
 
-  if (user.loginType !== UserLoginType.EMAIL_PASSWORD) {
-    // If user is registered with some other method, we will ask him/her to use the same method as registered.
-    // This shows that if user is registered with methods other than email password, he/she will not be able to login with password. Which makes password field redundant for the SSO
+  if (user.loginType && user.loginType !== UserLoginType.EMAIL_PASSWORD) {
     throw new ApiError(
       400,
-      "You have previously registered using " +
-        user.loginType?.toLowerCase() +
-        ". Please use the " +
-        user.loginType?.toLowerCase() +
-        " login option to access your account."
+      `You have previously registered using ${user.loginType.toLowerCase() || "another"} method. Please use the ${user.loginType.toLowerCase() || "appropriate"} login option to access your account.`
     );
+  }
+
+  // If loginType is not set, assume EMAIL_PASSWORD
+  if (!user.loginType) {
+    user.loginType = UserLoginType.EMAIL_PASSWORD;
+    await user.save({ validateBeforeSave: false });
   }
 
   // Compare the incoming password with hashed password
@@ -231,6 +247,16 @@ const resendEmailVerification = asyncHandler(async (req, res) => {
   user.emailVerificationExpiry = tokenExpiry;
   await user.save({ validateBeforeSave: false });
 
+  await sendEmail({
+    email: user?.email,
+    subject: "Please verify your email",
+    mailgenContent: emailVerificationMailgenContent(
+      user.username,
+      `${req.protocol}://${req.get(
+        "host"
+      )}/api/v1/users/verify-email/${unHashedToken}`
+    ),
+  });
   return res
     .status(200)
     .json(new ApiResponse(200, {}, "Mail has been sent to your mail ID"));
@@ -305,7 +331,16 @@ const forgotPasswordRequest = asyncHandler(async (req, res) => {
   await user.save({ validateBeforeSave: false });
 
   // Send mail with the password reset link. It should be the link of the frontend url with token
-
+  await sendEmail({
+    email: user?.email,
+    subject: "Password reset request",
+    mailgenContent: forgotPasswordMailgenContent(
+      user.username,
+      // ! NOTE: Following link should be the link of the frontend page responsible to request password reset
+      // ! Frontend will send the below token with the new password in the request body to the backend reset password endpoint
+      `${process.env.FORGOT_PASSWORD_REDIRECT_URL}/${unHashedToken}`
+    ),
+  });
   return res
     .status(200)
     .json(

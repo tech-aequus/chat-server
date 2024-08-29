@@ -1,0 +1,20 @@
+[29 Aug, 2024 - 19:18:28:1828] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:19:00:190] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:24:50:2450] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:25:02:252] [31merror[39m: [31mReceived data is not valid[39m
+[29 Aug, 2024 - 19:25:18:2518] [31merror[39m: [31mEmail service failed silently. Make sure you have provided your MAILTRAP credentials in the .env file[39m
+[29 Aug, 2024 - 19:25:18:2518] [31merror[39m: [31mError:  getaddrinfo ENOTFOUND __mailtrap_smtp_host__[39m
+[29 Aug, 2024 - 19:25:25:2525] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:26:22:2622] [31merror[39m: [31mUser does not exist[39m
+[29 Aug, 2024 - 19:26:38:2638] [31merror[39m: [31mEmail service failed silently. Make sure you have provided your MAILTRAP credentials in the .env file[39m
+[29 Aug, 2024 - 19:26:38:2638] [31merror[39m: [31mError:  getaddrinfo ENOTFOUND __mailtrap_smtp_host__[39m
+[29 Aug, 2024 - 19:26:43:2643] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:27:46:2746] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:28:15:2815] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:30:32:3032] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:30:40:3040] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:30:49:3049] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:30:50:3050] [31merror[39m: [31mUser does not exist[39m
+[29 Aug, 2024 - 19:30:51:3051] [31merror[39m: [31mUser does not exist[39m
+[29 Aug, 2024 - 19:33:13:3313] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
+[29 Aug, 2024 - 19:33:26:3326] [31merror[39m: [31mYou have previously registered using undefined. Please use the undefined login option to access your account.[39m
