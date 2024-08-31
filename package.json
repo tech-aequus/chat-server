@@ -28,6 +28,7 @@
     "passport": "^0.6.0",
     "passport-github2": "^0.1.12",
     "passport-google-oauth20": "^2.0.0",
+    "redis": "^4.7.0",
     "request-ip": "^3.3.0",
     "socket.io": "^4.7.1",
     "swagger-ui-express": "^4.6.3",
@@ -54,7 +55,8 @@
     "supertest-session": "^5.0.1"
   },
   "scripts": {
-    "start": "nodemon -r dotenv/config --experimental-json-modules src/index.js",
+    "start": "node src/index.js",
+    "dev": "nodemon -r dotenv/config --experimental-json-modules src/index.js",
     "pre-commit": "lint-staged",
     "prepare": "node prepare.js",
     "start:test-server": "node -r dotenv/config --experimental-json-modules e2e/test-server.js",
