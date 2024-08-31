@@ -55,7 +55,7 @@
     "supertest-session": "^5.0.1"
   },
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node -r dotenv/config --experimental-json-modules src/index.js",
     "dev": "nodemon -r dotenv/config --experimental-json-modules src/index.js",
     "pre-commit": "lint-staged",
     "prepare": "node prepare.js",
