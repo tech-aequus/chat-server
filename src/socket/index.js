@@ -4,6 +4,8 @@ import { Server, Socket } from "socket.io";
 import { AvailableChatEvents, ChatEventEnum } from "../constants.js";
 import { User } from "../models/auth/user.models.js";
 import { ApiError } from "../utils/ApiError.js";
+import { redisPub, redisSub } from "../utils/redisClient.js";
+import { cleanupRedisForChat } from "../utils/redisCleanup.js";
 
 /**
  * @description This function is responsible to allow user to join the chat represented by chatId (chatId). event happens when user switches between the chats
@@ -85,10 +87,59 @@ const initializeSocketIO = (io) => {
       mountParticipantTypingEvent(socket);
       mountParticipantStoppedTypingEvent(socket);
 
-      socket.on(ChatEventEnum.DISCONNECT_EVENT, () => {
-        console.log("user has disconnected 🚫. userId: " + socket.user?._id);
-        if (socket.user?._id) {
-          socket.leave(socket.user._id);
+      socket.on(ChatEventEnum.DISCONNECT_EVENT, async () => {
+        try {
+          console.log("User has disconnected 🚫. userId: " + socket.user?._id);
+          console.log(socket.rooms);
+          const rooms = Object.keys(socket.rooms);
+
+          for (const room of rooms) {
+            if (room !== socket.user?._id.toString()) {
+              await cleanupRedisForChat(room);
+              console.log(`Cleaned up Redis for chat: ${room}`);
+            }
+            socket.leave(room);
+          }
+
+          if (socket.user?._id) {
+            const userRoom = socket.user._id.toString();
+            socket.leave(userRoom);
+            await redisSub.unsubscribe(`user:${userRoom}`);
+            console.log(`Unsubscribed from Redis channel: user:${userRoom}`);
+          }
+
+          // Perform any additional cleanup if necessary
+          // For example, you might want to update user status in the database
+
+          console.log(
+            "Disconnect process completed for user: " + socket.user?._id
+          );
+        } catch (error) {
+          console.error("Error during disconnect process:", error);
+        }
+      });
+      redisSub.subscribe(`user:${socket.user._id}`);
+
+      // Handle incoming messages
+      socket.on(ChatEventEnum.MESSAGE_RECEIVED_EVENT, async (data) => {
+        const { chatId, message } = data;
+        await redisPub.publish(
+          `chat:${chatId}`,
+          JSON.stringify({
+            event: ChatEventEnum.MESSAGE_RECEIVED_EVENT,
+            data: { senderId: socket.user._id, message },
+          })
+        );
+      });
+
+      // Handle Redis messages
+      redisSub.on("message", (channel, message) => {
+        const parsedMessage = JSON.parse(message);
+        if (channel.startsWith("chat:")) {
+          const chatId = channel.split(":")[1];
+          socket.to(chatId).emit(parsedMessage.event, parsedMessage.data);
+        } else if (channel === `user:${socket.user._id}`) {
+          socket.emit(parsedMessage.event, parsedMessage.data);
         }
       });
     } catch (error) {

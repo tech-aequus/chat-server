@@ -11,6 +11,7 @@ import {
   getStaticFilePath,
   removeLocalFile,
 } from "../utils/helpers.js";
+import { redisClient } from "../utils/redisClient.js";
 
 /**
  * @description Utility function which returns the pipeline stages to structure the chat message schema with common lookups
@@ -52,29 +53,55 @@ const getAllMessages = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  // Only send messages if the logged in user is a part of the chat he is requesting messages of
   if (!selectedChat.participants?.includes(req.user?._id)) {
     throw new ApiError(400, "User is not a part of this chat");
   }
 
-  const messages = await ChatMessage.aggregate([
-    {
-      $match: {
-        chat: new mongoose.Types.ObjectId(chatId),
-      },
-    },
-    ...chatMessageCommonAggregation(),
-    {
-      $sort: {
-        createdAt: -1,
-      },
-    },
-  ]);
+  // Fetch recent messages from Redis
+  const recentMessages = await redisClient.lrange(
+    `chat:${chatId}:messages`,
+    0,
+    -1
+  );
+  const parsedRecentMessages = recentMessages.map((msg) => JSON.parse(msg));
+
+  // Get the timestamp of the oldest message in Redis
+  const oldestRedisMessageTimestamp =
+    parsedRecentMessages.length > 0
+      ? new Date(
+          parsedRecentMessages[parsedRecentMessages.length - 1].createdAt
+        )
+      : new Date();
+
+  // Fetch older messages from MongoDB
+  const oldMessages = await ChatMessage.find({
+    chat: chatId,
+    createdAt: { $lt: oldestRedisMessageTimestamp },
+  })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+
+  // Combine and sort messages
+  const allMessages = [...parsedRecentMessages, ...oldMessages].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  // Remove duplicate messages based on _id
+  const uniqueMessages = allMessages.filter(
+    (message, index, self) =>
+      index ===
+      self.findIndex((t) => t._id.toString() === message._id.toString())
+  );
 
   return res
     .status(200)
     .json(
-      new ApiResponse(200, messages || [], "Messages fetched successfully")
+      new ApiResponse(
+        200,
+        uniqueMessages || [],
+        "Messages fetched successfully"
+      )
     );
 });
 
@@ -105,13 +132,30 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   // Create a new message instance with appropriate metadata
   const message = await ChatMessage.create({
-    sender: new mongoose.Types.ObjectId(req.user._id),
+    sender: req.user._id,
     content: content || "",
-    chat: new mongoose.Types.ObjectId(chatId),
-    attachments: messageFiles,
+    chat: chatId,
   });
 
-  // update the chat's last message which could be utilized to show last message in the list item
+  const messageToStore = {
+    _id: message._id,
+    sender: message.sender,
+    content: message.content,
+    attachments: message.attachments,
+    chat: message.chat,
+    createdAt: message.createdAt,
+    updatedAt: message.updatedAt,
+  };
+
+  await redisClient.lpush(
+    `chat:${chatId}:messages`,
+    JSON.stringify(messageToStore)
+  );
+
+  // Set expiration for Redis message (e.g., 1 hour)
+  await redisClient.expire(`chat:${chatId}:messages`, 60);
+
+  // Update the chat's last message
   const chat = await Chat.findByIdAndUpdate(
     chatId,
     {
@@ -121,7 +165,6 @@ const sendMessage = asyncHandler(async (req, res) => {
     },
     { new: true }
   );
-
   // structure the message
   const messages = await ChatMessage.aggregate([
     {

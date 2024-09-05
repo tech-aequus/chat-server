@@ -1,7 +1,6 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { rateLimit } from "express-rate-limit";
 import session from "express-session";
 import fs from "fs";
 import { createServer } from "http";
@@ -11,7 +10,6 @@ import { fileURLToPath } from "url";
 import requestIp from "request-ip";
 import { Server } from "socket.io";
 import YAML from "yaml";
-import swaggerUi from "swagger-ui-express";
 import { DB_NAME } from "./constants.js";
 import { dbInstance } from "./db/index.js";
 import morganMiddleware from "./logger/morgan.logger.js";
