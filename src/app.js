@@ -86,7 +86,7 @@ app.use("/api/v1/healthcheck", healthcheckRouter);
 app.use("/api/v1/users", userRouter);
 
 app.use("/api/v1/chat-app/chats", chatRouter);
-app.post("/isEmailVerified", async (req, res) => {
+app.post("/api/v1/isEmailVerified", async (req, res) => {
   const { email } = req.body;
   console.log(email);
   try {
