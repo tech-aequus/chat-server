@@ -78,6 +78,16 @@ const chatCommonAggregation = () => {
   ];
 };
 
+const isEmailRegistered = async (email) => {
+  try {
+    const user = await User.findOne({ email });
+    return !!user;
+  } catch (error) {
+    console.error("Error checking email registration:", error);
+    return false;
+  }
+};
+
 /**
  *
  * @param {string} chatId
@@ -114,7 +124,7 @@ const searchAvailableUsers = asyncHandler(async (req, res) => {
     {
       $match: {
         _id: {
-          $ne: req.user._id, // avoid logged in user
+          $ne: req.user._id,
         },
       },
     },
@@ -649,4 +659,5 @@ export {
   removeParticipantFromGroupChat,
   renameGroupChat,
   searchAvailableUsers,
+  isEmailRegistered,
 };
