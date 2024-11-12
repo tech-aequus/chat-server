@@ -1,7 +1,7 @@
-const multer = require("multer");
-const multerS3 = require("multer-s3");
-const aws = require("aws-sdk");
-const { v4: uuidv4 } = require("uuid");
+import multer from "multer";
+import multerS3 from "multer-s3";
+import aws from "aws-sdk";
+import { v4 as uuidv4 } from "uuid";
 
 // Configure AWS
 const s3 = new aws.S3({
