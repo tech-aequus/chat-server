@@ -26,6 +26,7 @@ export const uploadToS3 = async (file, key) => {
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,
+      ACL: "public-read",
     });
 
     const result = await s3Client.send(command);
