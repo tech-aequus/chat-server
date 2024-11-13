@@ -109,8 +109,7 @@ const sendMessage = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
   const { content } = req.body;
 
-  // Check if there's either content or files
-  if (!content && !req.files?.length) {
+  if (!content && !req.files?.attachments?.length) {
     throw new ApiError(400, "Message content or attachment is required");
   }
 
@@ -120,30 +119,24 @@ const sendMessage = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  // Process S3 uploaded files
-  const attachments = [];
-  if (req.files && req.files.length > 0) {
-    attachments.push(
-      ...req.files.map((file) => ({
-        url: file.location, // S3 URL from multer-s3
-        key: file.key, // S3 object key
-        filename: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        bucketName: process.env.AWS_BUCKET_NAME,
-      }))
-    );
+  const messageFiles = [];
+
+  if (req.files && req.files.attachments?.length > 0) {
+    req.files.attachments?.map((attachment) => {
+      messageFiles.push({
+        url: getStaticFilePath(req, attachment.filename),
+        localPath: getLocalPath(attachment.filename),
+      });
+    });
   }
 
-  // Create a new message with attachments
+  // Create a new message instance with appropriate metadata
   const message = await ChatMessage.create({
     sender: req.user._id,
     content: content || "",
     chat: chatId,
-    attachments,
   });
 
-  // Prepare message for Redis storage
   const messageToStore = {
     _id: message._id,
     sender: message.sender,
@@ -154,18 +147,13 @@ const sendMessage = asyncHandler(async (req, res) => {
     updatedAt: message.updatedAt,
   };
 
-  // Store in Redis with error handling
-  try {
-    await redisClient.lpush(
-      `chat:${chatId}:messages`,
-      JSON.stringify(messageToStore)
-    );
-    // Set expiration for Redis message (1 hour)
-    await redisClient.expire(`chat:${chatId}:messages`, 3600); // 60 minutes * 60 seconds
-  } catch (error) {
-    console.error("Redis storage error:", error);
-    // Continue execution even if Redis fails
-  }
+  await redisClient.lpush(
+    `chat:${chatId}:messages`,
+    JSON.stringify(messageToStore)
+  );
+
+  // Set expiration for Redis message (e.g., 1 hour)
+  await redisClient.expire(`chat:${chatId}:messages`, 60);
 
   // Update the chat's last message
   const chat = await Chat.findByIdAndUpdate(
@@ -177,8 +165,7 @@ const sendMessage = asyncHandler(async (req, res) => {
     },
     { new: true }
   );
-
-  // Aggregate message with common pipeline
+  // structure the message
   const messages = await ChatMessage.aggregate([
     {
       $match: {
@@ -188,16 +175,20 @@ const sendMessage = asyncHandler(async (req, res) => {
     ...chatMessageCommonAggregation(),
   ]);
 
+  // Store the aggregation result
   const receivedMessage = messages[0];
 
   if (!receivedMessage) {
     throw new ApiError(500, "Internal server error");
   }
 
-  // Emit socket events to other participants
+  // logic to emit socket event about the new message created to the other participants
   chat.participants.forEach((participantObjectId) => {
+    // here the chat is the raw instance of the chat in which participants is the array of object ids of users
+    // avoid emitting event to the user who is sending the message
     if (participantObjectId.toString() === req.user._id.toString()) return;
 
+    // emit the receive message event to the other participants with received message as the payload
     emitSocketEvent(
       req,
       participantObjectId.toString(),
@@ -211,34 +202,6 @@ const sendMessage = asyncHandler(async (req, res) => {
     .json(new ApiResponse(201, receivedMessage, "Message saved successfully"));
 });
 
-// Helper function to clean up S3 files in case of error
-const cleanupS3Uploads = async (files) => {
-  try {
-    if (!files || !files.length) return;
-
-    const deletePromises = files.map((file) => {
-      return s3
-        .deleteObject({
-          Bucket: process.env.AWS_BUCKET_NAME,
-          Key: file.key,
-        })
-        .promise();
-    });
-
-    await Promise.all(deletePromises);
-  } catch (error) {
-    console.error("S3 cleanup error:", error);
-  }
-};
-
-// Error handling middleware for the route
-const handleMessageError = asyncHandler(async (err, req, res, next) => {
-  // Clean up any uploaded files if there's an error
-  if (req.files) {
-    await cleanupS3Uploads(req.files);
-  }
-  next(err);
-});
 const deleteMessage = asyncHandler(async (req, res) => {
   //controller to delete chat messages and attachments
 
@@ -312,4 +275,4 @@ const deleteMessage = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, message, "Message deleted successfully"));
 });
 
-export { getAllMessages, sendMessage, deleteMessage, handleMessageError };
+export { getAllMessages, sendMessage, deleteMessage };

@@ -1,30 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-const attachmentSchema = new Schema({
-  url: {
-    type: String,
-    required: true,
-  },
-  key: {
-    type: String,
-    required: true, // S3 object key
-  },
-  filename: {
-    type: String,
-    required: true, // Original filename
-  },
-  mimeType: {
-    type: String,
-    required: true,
-  },
-  size: {
-    type: Number,
-    required: true, // File size in bytes
-  },
-  bucketName: {
-    type: String,
-    required: true, // S3 bucket name
-  },
-});
+
 const chatMessageSchema = new Schema(
   {
     sender: {
@@ -35,7 +10,12 @@ const chatMessageSchema = new Schema(
       type: String,
     },
     attachments: {
-      type: [attachmentSchema],
+      type: [
+        {
+          url: String,
+          localPath: String,
+        },
+      ],
       default: [],
     },
     chat: {
