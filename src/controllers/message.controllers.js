@@ -12,6 +12,7 @@ import {
   removeLocalFile,
 } from "../utils/helpers.js";
 import { redisClient } from "../utils/redisClient.js";
+import { uploadToS3, deleteFromS3 } from "../utils/s3utils.js";
 
 /**
  * @description Utility function which returns the pipeline stages to structure the chat message schema with common lookups
@@ -122,19 +123,28 @@ const sendMessage = asyncHandler(async (req, res) => {
   const messageFiles = [];
 
   if (req.files && req.files.attachments?.length > 0) {
-    req.files.attachments?.map((attachment) => {
-      messageFiles.push({
-        url: getStaticFilePath(req, attachment.filename),
-        localPath: getLocalPath(attachment.filename),
-      });
+    // Upload files to S3
+    const uploadPromises = req.files.attachments.map(async (file) => {
+      const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
+      const s3Url = await uploadToS3(file, key);
+
+      return {
+        url: s3Url,
+        key: key, // Store S3 key for future deletion
+        _id: new mongoose.Types.ObjectId(),
+      };
     });
+
+    const uploadedFiles = await Promise.all(uploadPromises);
+    messageFiles.push(...uploadedFiles);
   }
 
-  // Create a new message instance with appropriate metadata
+  // Create message with S3 attachments
   const message = await ChatMessage.create({
     sender: req.user._id,
     content: content || "",
     chat: chatId,
+    attachments: messageFiles,
   });
 
   const messageToStore = {
@@ -203,11 +213,8 @@ const sendMessage = asyncHandler(async (req, res) => {
 });
 
 const deleteMessage = asyncHandler(async (req, res) => {
-  //controller to delete chat messages and attachments
-
   const { chatId, messageId } = req.params;
 
-  //Find the chat based on chatId and checking if user is a participant of the chat
   const chat = await Chat.findOne({
     _id: new mongoose.Types.ObjectId(chatId),
     participants: req.user?._id,
@@ -217,7 +224,6 @@ const deleteMessage = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  //Find the message based on message id
   const message = await ChatMessage.findOne({
     _id: new mongoose.Types.ObjectId(messageId),
   });
@@ -226,18 +232,16 @@ const deleteMessage = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Message does not exist");
   }
 
-  // Check if user is the sender of the message
   if (message.sender.toString() !== req.user._id.toString()) {
-    throw new ApiError(
-      403,
-      "You are not the authorised to delete the message, you are not the sender"
-    );
+    throw new ApiError(403, "You are not authorized to delete the message");
   }
+
+  // Delete attachments from S3
   if (message.attachments.length > 0) {
-    //If the message is attachment  remove the attachments from the server
-    message.attachments.map((asset) => {
-      removeLocalFile(asset.localPath);
-    });
+    const deletePromises = message.attachments.map((asset) =>
+      deleteFromS3(asset.key)
+    );
+    await Promise.all(deletePromises);
   }
   //deleting the message from DB
   await ChatMessage.deleteOne({

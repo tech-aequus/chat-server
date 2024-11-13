@@ -9,15 +9,14 @@ const chatMessageSchema = new Schema(
     content: {
       type: String,
     },
-    attachments: {
-      type: [
-        {
-          url: String,
-          localPath: String,
-        },
-      ],
-      default: [],
-    },
+    attachments: [
+      {
+        url: String,
+        key: String, // S3 key for deletion
+        _id: Schema.Types.ObjectId,
+      },
+    ],
+
     chat: {
       type: Schema.Types.ObjectId,
       ref: "Chat",
