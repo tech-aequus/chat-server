@@ -1,5 +1,4 @@
 import { S3Client } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 const s3Client = new S3Client({
@@ -12,21 +11,37 @@ const s3Client = new S3Client({
 
 export const uploadToS3 = async (file, key) => {
   try {
-    const upload = new Upload({
-      client: s3Client,
-      params: {
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-      },
+    console.log("Starting S3 upload with:", {
+      bucket: process.env.AWS_BUCKET_NAME,
+      key,
+      fileSize: file.buffer.length,
+      contentType: file.mimetype,
     });
 
-    const result = await upload.done();
-    return result.Location;
+    const command = new PutObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+      ACL: "public-read",
+    });
+
+    const result = await s3Client.send(command);
+    console.log("S3 upload result:", result);
+
+    // Construct the URL
+    const s3Url = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+    console.log("Generated S3 URL:", s3Url);
+
+    return s3Url;
   } catch (error) {
-    console.error("Error uploading to S3:", error);
-    throw error;
+    console.error("Detailed S3 upload error:", {
+      errorMessage: error.message,
+      errorCode: error.code,
+      errorStack: error.stack,
+      errorDetails: error,
+    });
+    throw new Error(`S3 upload failed: ${error.message}`);
   }
 };
 

@@ -107,113 +107,145 @@ const getAllMessages = asyncHandler(async (req, res) => {
 });
 
 const sendMessage = asyncHandler(async (req, res) => {
-  const { chatId } = req.params;
-  const { content } = req.body;
+  try {
+    const { chatId } = req.params;
+    const { content } = req.body;
 
-  if (!content && !req.files?.attachments?.length) {
-    throw new ApiError(400, "Message content or attachment is required");
-  }
+    console.log("Received request:", {
+      chatId,
+      content,
+      files: req.files,
+    });
 
-  const selectedChat = await Chat.findById(chatId);
-
-  if (!selectedChat) {
-    throw new ApiError(404, "Chat does not exist");
-  }
-
-  const messageFiles = [];
-
-  if (req.files && req.files.attachments?.length > 0) {
-    // Add better error handling for file uploads
-    try {
-      const uploadPromises = req.files.attachments.map(async (file) => {
-        const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
-        const s3Url = await uploadToS3(file, key);
-
-        return {
-          url: s3Url,
-          key: key,
-          _id: new mongoose.Types.ObjectId(),
-        };
-      });
-
-      const uploadedFiles = await Promise.all(uploadPromises);
-      messageFiles.push(...uploadedFiles);
-    } catch (error) {
-      console.error("Error uploading files:", error);
-      throw new ApiError(500, "Error uploading files to S3");
+    if (!content && !req.files?.attachments?.length) {
+      throw new ApiError(400, "Message content or attachment is required");
     }
-  }
 
-  // Create message with S3 attachments
-  const message = await ChatMessage.create({
-    sender: req.user._id,
-    content: content || "",
-    chat: chatId,
-    attachments: messageFiles,
-  });
-  const messageToStore = {
-    _id: message._id,
-    sender: message.sender,
-    content: message.content,
-    attachments: message.attachments,
-    chat: message.chat,
-    createdAt: message.createdAt,
-    updatedAt: message.updatedAt,
-  };
+    const selectedChat = await Chat.findById(chatId);
 
-  await redisClient.lpush(
-    `chat:${chatId}:messages`,
-    JSON.stringify(messageToStore)
-  );
+    if (!selectedChat) {
+      throw new ApiError(404, "Chat does not exist");
+    }
 
-  // Set expiration for Redis message (e.g., 1 hour)
-  await redisClient.expire(`chat:${chatId}:messages`, 60);
+    const messageFiles = [];
 
-  // Update the chat's last message
-  const chat = await Chat.findByIdAndUpdate(
-    chatId,
-    {
-      $set: {
-        lastMessage: message._id,
-      },
-    },
-    { new: true }
-  );
-  // structure the message
-  const messages = await ChatMessage.aggregate([
-    {
-      $match: {
-        _id: new mongoose.Types.ObjectId(message._id),
-      },
-    },
-    ...chatMessageCommonAggregation(),
-  ]);
+    if (req.files && req.files.attachments?.length > 0) {
+      console.log(`Processing ${req.files.attachments.length} files`);
 
-  // Store the aggregation result
-  const receivedMessage = messages[0];
+      for (const file of req.files.attachments) {
+        try {
+          console.log("Processing file:", {
+            filename: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype,
+          });
 
-  if (!receivedMessage) {
-    throw new ApiError(500, "Internal server error");
-  }
+          const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
+          const s3Url = await uploadToS3(file, key);
 
-  // logic to emit socket event about the new message created to the other participants
-  chat.participants.forEach((participantObjectId) => {
-    // here the chat is the raw instance of the chat in which participants is the array of object ids of users
-    // avoid emitting event to the user who is sending the message
-    if (participantObjectId.toString() === req.user._id.toString()) return;
+          console.log("File uploaded successfully:", {
+            key,
+            url: s3Url,
+          });
 
-    // emit the receive message event to the other participants with received message as the payload
-    emitSocketEvent(
-      req,
-      participantObjectId.toString(),
-      ChatEventEnum.MESSAGE_RECEIVED_EVENT,
-      receivedMessage
+          messageFiles.push({
+            url: s3Url,
+            key: key,
+            _id: new mongoose.Types.ObjectId(),
+          });
+        } catch (error) {
+          console.error("Error processing individual file:", {
+            filename: file.originalname,
+            error: error.message,
+          });
+          throw error;
+        }
+      }
+    }
+
+    console.log("Creating message with files:", messageFiles);
+
+    // Create message with S3 attachments
+    const message = await ChatMessage.create({
+      sender: req.user._id,
+      content: content || "",
+      chat: chatId,
+      attachments: messageFiles,
+    });
+
+    console.log("Message created successfully:", message._id);
+    const messageToStore = {
+      _id: message._id,
+      sender: message.sender,
+      content: message.content,
+      attachments: message.attachments,
+      chat: message.chat,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    };
+
+    await redisClient.lpush(
+      `chat:${chatId}:messages`,
+      JSON.stringify(messageToStore)
     );
-  });
 
-  return res
-    .status(201)
-    .json(new ApiResponse(201, receivedMessage, "Message saved successfully"));
+    // Set expiration for Redis message (e.g., 1 hour)
+    await redisClient.expire(`chat:${chatId}:messages`, 60);
+
+    // Update the chat's last message
+    const chat = await Chat.findByIdAndUpdate(
+      chatId,
+      {
+        $set: {
+          lastMessage: message._id,
+        },
+      },
+      { new: true }
+    );
+    // structure the message
+    const messages = await ChatMessage.aggregate([
+      {
+        $match: {
+          _id: new mongoose.Types.ObjectId(message._id),
+        },
+      },
+      ...chatMessageCommonAggregation(),
+    ]);
+
+    // Store the aggregation result
+    const receivedMessage = messages[0];
+
+    if (!receivedMessage) {
+      throw new ApiError(500, "Internal server error");
+    }
+
+    // logic to emit socket event about the new message created to the other participants
+    chat.participants.forEach((participantObjectId) => {
+      // here the chat is the raw instance of the chat in which participants is the array of object ids of users
+      // avoid emitting event to the user who is sending the message
+      if (participantObjectId.toString() === req.user._id.toString()) return;
+
+      // emit the receive message event to the other participants with received message as the payload
+      emitSocketEvent(
+        req,
+        participantObjectId.toString(),
+        ChatEventEnum.MESSAGE_RECEIVED_EVENT,
+        receivedMessage
+      );
+    });
+
+    return res
+      .status(201)
+      .json(
+        new ApiResponse(201, receivedMessage, "Message saved successfully")
+      );
+  } catch (error) {
+    console.error("Controller error:", {
+      message: error.message,
+      stack: error.stack,
+    });
+    throw new ApiError(500, `Error uploading files to S3: ${error.message}`);
+  }
 });
 
 const deleteMessage = asyncHandler(async (req, res) => {
