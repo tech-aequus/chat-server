@@ -25,8 +25,6 @@ router
     sendMessage
   );
 
-//Delete message route based on Message id
-
 router
   .route("/:chatId/:messageId")
   .delete(
