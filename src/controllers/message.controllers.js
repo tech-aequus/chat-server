@@ -123,20 +123,25 @@ const sendMessage = asyncHandler(async (req, res) => {
   const messageFiles = [];
 
   if (req.files && req.files.attachments?.length > 0) {
-    // Upload files to S3
-    const uploadPromises = req.files.attachments.map(async (file) => {
-      const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
-      const s3Url = await uploadToS3(file, key);
+    // Add better error handling for file uploads
+    try {
+      const uploadPromises = req.files.attachments.map(async (file) => {
+        const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
+        const s3Url = await uploadToS3(file, key);
 
-      return {
-        url: s3Url,
-        key: key, // Store S3 key for future deletion
-        _id: new mongoose.Types.ObjectId(),
-      };
-    });
+        return {
+          url: s3Url,
+          key: key,
+          _id: new mongoose.Types.ObjectId(),
+        };
+      });
 
-    const uploadedFiles = await Promise.all(uploadPromises);
-    messageFiles.push(...uploadedFiles);
+      const uploadedFiles = await Promise.all(uploadPromises);
+      messageFiles.push(...uploadedFiles);
+    } catch (error) {
+      console.error("Error uploading files:", error);
+      throw new ApiError(500, "Error uploading files to S3");
+    }
   }
 
   // Create message with S3 attachments
@@ -146,7 +151,6 @@ const sendMessage = asyncHandler(async (req, res) => {
     chat: chatId,
     attachments: messageFiles,
   });
-
   const messageToStore = {
     _id: message._id,
     sender: message.sender,
