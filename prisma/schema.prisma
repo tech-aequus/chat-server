@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime
+  User              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Achievement {
+  id              String   @id
+  game            String
+  achievementName String   @unique
+  challenge       String
+  description     String
+  bannerImage     String   @default("https://aequus-posts.s3.us-west-2.amazonaws.com/uploads/1741861169744-banner.png")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+}
+
+model Challenge {
+  id                             String          @id
+  creatorId                      String
+  inviteeId                      String
+  status                         ChallengeStatus
+  game                           String
+  description                    String?
+  rules                          Json
+  createdAt                      DateTime        @default(now())
+  acceptedAt                     DateTime?
+  expiresAt                      DateTime
+  completedAt                    DateTime?
+  coins                          Int
+  claimTime                      DateTime?
+  updatedAt                      DateTime        @default(now())
+  winnerId                       String?
+  User_Challenge_creatorIdToUser User            @relation("Challenge_creatorIdToUser", fields: [creatorId], references: [name])
+  User_Challenge_inviteeIdToUser User            @relation("Challenge_inviteeIdToUser", fields: [inviteeId], references: [name])
+  Claim                          Claim[]
+}
+
+model Claim {
+  id          String    @id
+  challengeId String
+  claimantId  String
+  claimedAt   DateTime  @default(now())
+  Challenge   Challenge @relation(fields: [challengeId], references: [id])
+  User        User      @relation(fields: [claimantId], references: [name])
+}
+
+model Event {
+  prizePool             Float?
+  Description           String
+  authorId              String
+  createdAt             DateTime @default(now())
+  discordCommunityLink  String?
+  eventPoster           String?
+  game                  String
+  gameProfileImage      String?
+  isFreeToRegister      Boolean  @default(true)
+  liveStreamLinks       String?
+  maxParticipantAllowed Int
+  name                  String
+  registerAmount        Float?
+  registerBefore        DateTime
+  updatedAt             DateTime @default(now())
+  usersRegistered       String[]
+  id                    Int      @id @default(autoincrement())
+  User                  User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}
+
+model Faction {
+  id          String   @id
+  name        String   @unique
+  description String
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  Member      Member[]
+}
+
+model FriendRequest {
+  id                                  String              @id
+  senderId                            String
+  receiverId                          String
+  status                              FriendRequestStatus @default(PENDING)
+  createdAt                           DateTime            @default(now())
+  User_FriendRequest_receiverIdToUser User                @relation("FriendRequest_receiverIdToUser", fields: [receiverId], references: [id])
+  User_FriendRequest_senderIdToUser   User                @relation("FriendRequest_senderIdToUser", fields: [senderId], references: [id])
+
+  @@unique([senderId, receiverId])
+}
+
+model Game {
+  id            String   @id
+  name          String   @unique
+  imageUrl      String
+  playersOnline Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+}
+
+model Member {
+  id        String   @id
+  userId    String
+  factionId String
+  joinedAt  DateTime @default(now())
+  coins     Int      @default(0)
+  Faction   Faction  @relation(fields: [factionId], references: [id])
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, factionId])
+}
+
+model StoreItem {
+  id          String   @id
+  name        String   @unique
+  description String
+  imageUrl    String?
+  cost        Int
+  type        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model User {
+  id                                           String          @id
+  email                                        String          @unique
+  createdAt                                    DateTime        @default(now())
+  updatedAt                                    DateTime
+  generatedPassword                            String?
+  emailVerified                                DateTime?
+  image                                        String?
+  role                                         String          @default("user")
+  password                                     String?
+  name                                         String          @unique
+  coins                                        Int             @default(0)
+  isVerified                                   Boolean         @default(false)
+  isAdmin                                      Boolean         @default(false)
+  multiplier                                   Float           @default(1)
+  multiplierExpiresAt                          DateTime?
+  xp                                           Int             @default(0)
+  purchasedItems                               String[]        @default([])
+  achievements                                 String[]        @default([])
+  banner                                       String          @default("https://aequus-posts.s3.us-west-2.amazonaws.com/uploads/1741861169744-banner.png")
+  bio                                          String          @default("")
+  Account                                      Account[]
+  Challenge_Challenge_creatorIdToUser          Challenge[]     @relation("Challenge_creatorIdToUser")
+  Challenge_Challenge_inviteeIdToUser          Challenge[]     @relation("Challenge_inviteeIdToUser")
+  Claim                                        Claim[]
+  Event                                        Event[]
+  FriendRequest_FriendRequest_receiverIdToUser FriendRequest[] @relation("FriendRequest_receiverIdToUser")
+  FriendRequest_FriendRequest_senderIdToUser   FriendRequest[] @relation("FriendRequest_senderIdToUser")
+  Member                                       Member[]
+  comments                                     comments[]
+  posts                                        posts[]
+}
+
+model comments {
+  id           Int      @id @default(autoincrement())
+  userId       String
+  postId       Int
+  body         String
+  commentImage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+  posts        posts    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  User         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model posts {
+  id        Int        @id @default(autoincrement())
+  userId    String
+  body      String
+  postImage String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime
+  likeIds   String[]
+  comments  comments[]
+  User      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  EXPIRED
+  DISPUTED
+  STARTING
+}
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
