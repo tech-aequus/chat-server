@@ -7,7 +7,7 @@ import { body, param } from "express-validator";
  */
 export const mongoIdPathVariableValidator = (idName) => {
   return [
-    param(idName).notEmpty().isMongoId().withMessage(`Invalid ${idName}`),
+    param(idName).notEmpty().isUUID().withMessage(`Invalid ${idName}`),
   ];
 };
 
@@ -17,5 +17,5 @@ export const mongoIdPathVariableValidator = (idName) => {
  * @description A common validator responsible to validate mongodb ids passed in the request body
  */
 export const mongoIdRequestBodyValidator = (idName) => {
-  return [body(idName).notEmpty().isMongoId().withMessage(`Invalid ${idName}`)];
+  return [body(idName).notEmpty().isUUID().withMessage(`Invalid ${idName}`)];
 };

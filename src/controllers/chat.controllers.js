@@ -8,7 +8,9 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { removeLocalFile } from "../utils/helpers.js";
+import { PrismaClient } from "@prisma/client";
 
+const prisma = new PrismaClient();
 /**
  * @description Utility function which returns the pipeline stages to structure the chat schema with common lookups
  * @returns {mongoose.PipelineStage[]}
@@ -146,146 +148,161 @@ const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
   const { receiverId } = req.params;
 
   // Check if it's a valid receiver
-  const receiver = await User.findById(receiverId);
+  const receiver = await prisma.user.findUnique({
+    where: { id: receiverId },
+  });
 
   if (!receiver) {
     throw new ApiError(404, "Receiver does not exist");
   }
 
-  // check if receiver is not the user who is requesting a chat
-  if (receiver._id.toString() === req.user._id.toString()) {
+  // Check if receiver is not the user who is requesting a chat
+  if (receiver.id === req.user.id) {
     throw new ApiError(400, "You cannot chat with yourself");
   }
 
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        isGroupChat: false, // avoid group chats. This controller is responsible for one on one chats
-        // Also, filter chats with participants having receiver and logged in user only
-        $and: [
-          {
-            participants: { $elemMatch: { $eq: req.user._id } },
+  // Check if a one-on-one chat already exists
+  const existingChat = await prisma.chat.findFirst({
+    where: {
+      isGroupChat: false,
+      participants: {
+        every: {
+          id: {
+            in: [req.user.id, receiverId],
           },
-          {
-            participants: {
-              $elemMatch: { $eq: new mongoose.Types.ObjectId(receiverId) },
+        },
+      },
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          image: true,
+          email: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+              email: true,
             },
           },
-        ],
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
-
-  if (chat.length) {
-    // if we find the chat that means user already has created a chat
-    return res
-      .status(200)
-      .json(new ApiResponse(200, chat[0], "Chat retrieved successfully"));
-  }
-
-  // if not we need to create a new one on one chat
-  const newChatInstance = await Chat.create({
-    name: "One on one chat",
-    participants: [req.user._id, new mongoose.Types.ObjectId(receiverId)], // add receiver and logged in user as participants
-    admin: req.user._id,
   });
 
-  // structure the chat as per the common aggregation to keep the consistency
-  const createdChat = await Chat.aggregate([
-    {
-      $match: {
-        _id: newChatInstance._id,
-      },
-    },
-    ...chatCommonAggregation(),
-  ]);
-
-  const payload = createdChat[0]; // store the aggregation result
-
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+  if (existingChat) {
+    // If the chat exists, return it
+    return res
+      .status(200)
+      .json(new ApiResponse(200, existingChat, "Chat retrieved successfully"));
   }
 
-  // logic to emit socket event about the new chat added to the participants
-  payload?.participants?.forEach((participant) => {
-    if (participant._id.toString() === req.user._id.toString()) return; // don't emit the event for the logged in use as he is the one who is initiating the chat
+  // If no chat exists, create a new one
+  const newChat = await prisma.chat.create({
+    data: {
+      name: "One on one chat",
+      isGroupChat: false,
+      participants: {
+        connect: [{ id: req.user.id }, { id: receiverId }],
+      },
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          image: true,
+          email: true,
+        },
+      },
+    },
+  });
 
-    // emit event to other participants with new chat as a payload
+  // Emit socket event about the new chat added to the participants
+  newChat.participants.forEach((participant) => {
+    if (participant.id === req.user.id) return; // Skip the creator
     emitSocketEvent(
       req,
-      participant._id?.toString(),
+      participant.id,
       ChatEventEnum.NEW_CHAT_EVENT,
-      payload
+      newChat
     );
   });
 
   return res
     .status(201)
-    .json(new ApiResponse(201, payload, "Chat retrieved successfully"));
+    .json(new ApiResponse(201, newChat, "Chat created successfully"));
 });
 
 const createAGroupChat = asyncHandler(async (req, res) => {
   const { name, participants } = req.body;
 
   // Check if user is not sending himself as a participant. This will be done manually
-  if (participants.includes(req.user._id.toString())) {
+  if (participants.includes(req.user.id)) {
     throw new ApiError(
       400,
       "Participants array should not contain the group creator"
     );
   }
 
-  const members = [...new Set([...participants, req.user._id.toString()])]; // check for duplicates
+  const members = [...new Set([...participants, req.user.id])]; // Check for duplicates
 
   if (members.length < 3) {
-    // check after removing the duplicate
-    // We want group chat to have minimum 3 members including admin
+    // Ensure group chat has at least 3 members (including admin)
     throw new ApiError(
       400,
-      "Seems like you have passed duplicate participants."
+      "A group chat must have at least 3 unique participants, including the creator."
     );
   }
 
-  // Create a group chat with provided members
-  const groupChat = await Chat.create({
-    name,
-    isGroupChat: true,
-    participants: members,
-    admin: req.user._id,
-  });
-
-  // structure the chat
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: groupChat._id,
+  try {
+    // Create a group chat with provided members
+    const groupChat = await prisma.chat.create({
+      data: {
+        name,
+        isGroupChat: true,
+        participants: {
+          connect: members.map((id) => ({ id })), // Connect participants by their IDs
+        },
+        adminId: req.user.id, // Set the creator as the admin
       },
-    },
-    ...chatCommonAggregation(),
-  ]);
+      include: {
+        participants: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            email: true,
+          },
+        },
+      },
+    });
 
-  const payload = chat[0];
+    // Emit socket event about the new group chat added to the participants
+    groupChat.participants.forEach((participant) => {
+      if (participant.id === req.user.id) return; // Skip the creator
+      emitSocketEvent(
+        req,
+        participant.id,
+        ChatEventEnum.NEW_CHAT_EVENT,
+        groupChat
+      );
+    });
 
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+    return res
+      .status(201)
+      .json(new ApiResponse(201, groupChat, "Group chat created successfully"));
+  } catch (error) {
+    console.error("Error creating group chat:", error);
+    throw new ApiError(500, "Failed to create group chat");
   }
-
-  // logic to emit socket event about the new group chat added to the participants
-  payload?.participants?.forEach((participant) => {
-    if (participant._id.toString() === req.user._id.toString()) return; // don't emit the event for the logged in use as he is the one who is initiating the chat
-    // emit event to other participants with new chat as a payload
-    emitSocketEvent(
-      req,
-      participant._id?.toString(),
-      ChatEventEnum.NEW_CHAT_EVENT,
-      payload
-    );
-  });
-
-  return res
-    .status(201)
-    .json(new ApiResponse(201, payload, "Group chat created successfully"));
 });
 
 const getGroupChatDetails = asyncHandler(async (req, res) => {
@@ -626,25 +643,52 @@ const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
 });
 
 const getAllChats = asyncHandler(async (req, res) => {
-  const chats = await Chat.aggregate([
-    {
-      $match: {
-        participants: { $elemMatch: { $eq: req.user._id } }, // get all chats that have logged in user as a participant
+  const userId = req.user.id;
+
+  const chats = await prisma.chat.findMany({
+    where: {
+      participants: {
+        some: {
+          id: userId,
+        },
       },
     },
-    {
-      $sort: {
-        updatedAt: -1,
+    orderBy: {
+      updatedAt: "desc",
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+      admin: {
+        select: {
+          id: true,
+          name: true,
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
   return res
     .status(200)
-    .json(
-      new ApiResponse(200, chats || [], "User chats fetched successfully!")
-    );
+    .json(new ApiResponse(200, chats || [], "User chats fetched successfully!"));
 });
 
 export {

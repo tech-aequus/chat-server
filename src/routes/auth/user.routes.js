@@ -36,24 +36,24 @@ import { mongoIdPathVariableValidator } from "../../validators/mongodb.validator
 const router = Router();
 
 // Unsecured route
-router.route("/register").post(userRegisterValidator(), validate, registerUser);
-router.route("/login").post(userLoginValidator(), validate, loginUser);
-router.route("/refresh-token").post(refreshAccessToken);
-router.route("/verify-email/:verificationToken").get(verifyEmail);
+// router.route("/register").post(userRegisterValidator(), validate, registerUser);
+// router.route("/login").post(userLoginValidator(), validate, loginUser);
+// router.route("/refresh-token").post(refreshAccessToken);
+// router.route("/verify-email/:verificationToken").get(verifyEmail);
 
 router
-  .route("/forgot-password")
-  .post(userForgotPasswordValidator(), validate, forgotPasswordRequest);
+  // .route("/forgot-password")
+  // .post(userForgotPasswordValidator(), validate, forgotPasswordRequest);
 router
-  .route("/reset-password/:resetToken")
-  .post(
-    userResetForgottenPasswordValidator(),
-    validate,
-    resetForgottenPassword
-  );
+  // .route("/reset-password/:resetToken")
+  // .post(
+  //   userResetForgottenPasswordValidator(),
+  //   validate,
+  //   resetForgottenPassword
+  // );
 
 // Secured routes
-router.route("/logout").post(verifyJWT, logoutUser);
+// router.route("/logout").post(verifyJWT, logoutUser);
 router
   .route("/avatar")
   .patch(verifyJWT, upload.single("avatar"), updateUserAvatar);

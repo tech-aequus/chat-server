@@ -1,8 +1,11 @@
+import { PrismaClient } from "@prisma/client";
 import { AvailableUserRoles } from "../constants.js";
 import { User } from "../models/auth/user.models.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import jwt from "jsonwebtoken";
+
+const prisma = new PrismaClient();
 
 // Helper function to extract token from request
 const extractToken = (req) => {
@@ -24,10 +27,21 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
   }
 
   try {
-    const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-    const user = await User.findById(decodedToken?._id).select(
-      "-password -refreshToken -emailVerificationToken -emailVerificationExpiry"
-    );
+    const decodedToken = jwt.decode(token, process.env.ACCESS_TOKEN_SECRET);
+    console.log("Decoded token: ", decodedToken);
+    const user = await prisma.user.findUnique({
+      where: { id: decodedToken?.id },
+      select: {
+        id: true,
+        name: true,
+        image: true,
+        createdAt: true,
+        updatedAt: true,
+        // Exclude sensitive fields
+        password: false,
+      },
+    });
+    
     if (!user) {
       throw new ApiError(401, "Invalid access token");
     }
