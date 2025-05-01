@@ -119,6 +119,50 @@ model Game {
   updatedAt     DateTime
 }
 
+model Chat {
+  id          String  @id @default(uuid())
+  name        String
+  isGroupChat Boolean @default(false)
+
+  messages ChatMessage[] @relation("AllMessages")
+
+  lastMessage   ChatMessage? @relation("LastMessage", fields: [lastMessageId], references: [id])
+  lastMessageId String?      @unique
+
+  participants User[]  @relation("UserChats")
+  admin        User?   @relation("ChatAdmin", fields: [adminId], references: [id])
+  adminId      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ChatMessage {
+  id       String @id @default(uuid())
+  content  String
+  sender   User   @relation(fields: [senderId], references: [id])
+  senderId String
+
+  lastMessageOfChat Chat? @relation("LastMessage")
+
+  chat   Chat   @relation("AllMessages", fields: [chatId], references: [id])
+  chatId String
+
+  attachments MessageAttachment[] // 1-to-many relation
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MessageAttachment {
+  id  String @id @default(uuid())
+  url String
+  key String // S3 key for deletion
+
+  message   ChatMessage @relation(fields: [messageId], references: [id])
+  messageId String
+}
+
 model Member {
   id        String   @id
   userId    String
@@ -173,6 +217,9 @@ model User {
   Member                                       Member[]
   comments                                     comments[]
   posts                                        posts[]
+  chats                                        Chat[]          @relation("UserChats") // participant in chats
+  adminOf                                      Chat[]          @relation("ChatAdmin") // admin of chats
+  messages                                     ChatMessage[]
 }
 
 model comments {
