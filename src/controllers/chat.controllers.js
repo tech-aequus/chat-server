@@ -1,8 +1,4 @@
-import mongoose from "mongoose";
 import { ChatEventEnum } from "../constants.js";
-import { User } from "../models/auth/user.models.js";
-import { Chat } from "../models/chat-app/chat.models.js";
-import { ChatMessage } from "../models/chat-app/message.models.js";
 import { emitSocketEvent } from "../socket/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
@@ -11,139 +7,69 @@ import { removeLocalFile } from "../utils/helpers.js";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
-/**
- * @description Utility function which returns the pipeline stages to structure the chat schema with common lookups
- * @returns {mongoose.PipelineStage[]}
- */
-const chatCommonAggregation = () => {
-  return [
-    {
-      // lookup for the participants present
-      $lookup: {
-        from: "users",
-        foreignField: "_id",
-        localField: "participants",
-        as: "participants",
-        pipeline: [
-          {
-            $project: {
-              password: 0,
-              refreshToken: 0,
-              forgotPasswordToken: 0,
-              forgotPasswordExpiry: 0,
-              emailVerificationToken: 0,
-              emailVerificationExpiry: 0,
-            },
-          },
-        ],
-      },
-    },
-    {
-      // lookup for the group chats
-      $lookup: {
-        from: "chatmessages",
-        foreignField: "_id",
-        localField: "lastMessage",
-        as: "lastMessage",
-        pipeline: [
-          {
-            // get details of the sender
-            $lookup: {
-              from: "users",
-              foreignField: "_id",
-              localField: "sender",
-              as: "sender",
-              pipeline: [
-                {
-                  $project: {
-                    username: 1,
-                    avatar: 1,
-                    email: 1,
-                  },
-                },
-              ],
-            },
-          },
-          {
-            $addFields: {
-              sender: { $first: "$sender" },
-            },
-          },
-        ],
-      },
-    },
-    {
-      $addFields: {
-        lastMessage: { $first: "$lastMessage" },
-      },
-    },
-  ];
-};
 
+//working fine
 const isEmailRegistered = async (email) => {
   try {
-    const user = await User.findOne({ email });
-    return !!user;
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+    return !!user; // Return true if user exists, false otherwise
   } catch (error) {
     console.error("Error checking email registration:", error);
     return false;
   }
 };
 
-/**
- *
- * @param {string} chatId
- * @description utility function responsible for removing all the messages and file attachments attached to the deleted chat
- */
 const deleteCascadeChatMessages = async (chatId) => {
-  // fetch the messages associated with the chat to remove
-  const messages = await ChatMessage.find({
-    chat: new mongoose.Types.ObjectId(chatId),
+  // Fetch the messages associated with the chat
+  const messages = await prisma.message.findMany({
+    where: { chatId },
+    select: {
+      attachments: true, // Select only the attachments field
+    },
   });
 
   let attachments = [];
 
-  // get the attachments present in the messages
+  // Get the attachments present in the messages
   attachments = attachments.concat(
-    ...messages.map((message) => {
-      return message.attachments;
-    })
+    ...messages.map((message) => message.attachments)
   );
 
+  // Remove attachment files from the local storage
   attachments.forEach((attachment) => {
-    // remove attachment files from the local storage
     removeLocalFile(attachment.localPath);
   });
 
-  // delete all the messages
-  await ChatMessage.deleteMany({
-    chat: new mongoose.Types.ObjectId(chatId),
+  // Delete all the messages
+  await prisma.message.deleteMany({
+    where: { chatId },
   });
 };
 
+//working fine
 const searchAvailableUsers = asyncHandler(async (req, res) => {
-  const users = await User.aggregate([
-    {
-      $match: {
-        _id: {
-          $ne: req.user._id,
-        },
+  const users = await prisma.user.findMany({
+    where: {
+      id: {
+        not: req.user.id, // Exclude the logged-in user
       },
     },
-    {
-      $project: {
-        avatar: 1,
-        username: 1,
-        email: 1,
-      },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      image: true,
     },
-  ]);
+  });
 
   return res
     .status(200)
     .json(new ApiResponse(200, users, "Users fetched successfully"));
 });
 
+//working fine
 const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
   const { receiverId } = req.params;
 
@@ -241,6 +167,7 @@ const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
     .json(new ApiResponse(201, newChat, "Chat created successfully"));
 });
 
+//working fine
 const createAGroupChat = asyncHandler(async (req, res) => {
   const { name, participants } = req.body;
 
@@ -305,129 +232,175 @@ const createAGroupChat = asyncHandler(async (req, res) => {
   }
 });
 
+//working fine
 const getGroupChatDetails = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
-  const groupChat = await Chat.aggregate([
-    {
-      $match: {
-        _id: new mongoose.Types.ObjectId(chatId),
-        isGroupChat: true,
+
+  // Fetch the group chat details
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+      admin: {
+        select: {
+          id: true,
+          name: true,
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
-  const chat = groupChat[0];
-
-  if (!chat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
   return res
     .status(200)
-    .json(new ApiResponse(200, chat, "Group chat fetched successfully"));
+    .json(new ApiResponse(200, groupChat, "Group chat fetched successfully"));
 });
 
+//working fine
 const renameGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
   const { name } = req.body;
 
-  // check for chat existence
-  const groupChat = await Chat.findOne({
-    _id: new mongoose.Types.ObjectId(chatId),
-    isGroupChat: true,
+  // Check for chat existence
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      admin: {
+        select: {
+          id: true,
+        },
+      },
+    },
   });
 
-  if (!groupChat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // only admin can change the name
-  if (groupChat.admin?.toString() !== req.user._id?.toString()) {
-    throw new ApiError(404, "You are not an admin");
+  // Only admin can change the name
+  if (groupChat.admin.id !== req.user.id) {
+    throw new ApiError(403, "You are not an admin");
   }
 
-  const updatedGroupChat = await Chat.findByIdAndUpdate(
-    chatId,
-    {
-      $set: {
-        name,
+  // Update the group chat name
+  const updatedGroupChat = await prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      name,
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
       },
     },
-    { new: true }
-  );
+  });
 
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: updatedGroupChat._id,
-      },
-    },
-    ...chatCommonAggregation(),
-  ]);
-
-  const payload = chat[0];
-
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+  if (!updatedGroupChat) {
+    throw new ApiError(500, "Failed to update the group chat name");
   }
 
-  // logic to emit socket event about the updated chat name to the participants
-  payload?.participants?.forEach((participant) => {
-    // emit event to all the participants with updated chat as a payload
+  // Emit socket event about the updated chat name to the participants
+  updatedGroupChat.participants.forEach((participant) => {
     emitSocketEvent(
       req,
-      participant._id?.toString(),
+      participant.id,
       ChatEventEnum.UPDATE_GROUP_NAME_EVENT,
-      payload
+      updatedGroupChat
     );
   });
 
   return res
     .status(200)
     .json(
-      new ApiResponse(200, chat[0], "Group chat name updated successfully")
+      new ApiResponse(200, updatedGroupChat, "Group chat name updated successfully")
     );
 });
 
 const deleteGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // check for the group chat existence
-  const groupChat = await Chat.aggregate([
-    {
-      $match: {
-        _id: new mongoose.Types.ObjectId(chatId),
-        isGroupChat: true,
+  // Check for the group chat existence
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      admin: {
+        select: {
+          id: true,
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
-  const chat = groupChat[0];
-
-  if (!chat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // check if the user who is deleting is the group admin
-  if (chat.admin?.toString() !== req.user._id?.toString()) {
-    throw new ApiError(404, "Only admin can delete the group");
+  // Check if the user who is deleting is the group admin
+  if (groupChat.admin.id !== req.user.id) {
+    throw new ApiError(403, "Only admin can delete the group");
   }
 
-  await Chat.findByIdAndDelete(chatId); // delete the chat
+  // Delete the group chat
+  await prisma.chat.delete({
+    where: { id: chatId },
+  });
+  await deleteCascadeChatMessages(chatId);
+  // Delete all messages associated with the group chat
+  await prisma.message.deleteMany({
+    where: { chatId },
+  });
 
-  await deleteCascadeChatMessages(chatId); // remove all messages and attachments associated with the chat
-
-  // logic to emit socket event about the group chat deleted to the participants
-  chat?.participants?.forEach((participant) => {
-    if (participant._id.toString() === req.user._id.toString()) return; // don't emit the event for the logged in use as he is the one who is deleting
-    // emit event to other participants with left chat as a payload
+  // Emit socket event about the group chat deletion to the participants
+  groupChat.participants.forEach((participant) => {
+    if (participant.id === req.user.id) return; // Skip the admin who is deleting the chat
     emitSocketEvent(
       req,
-      participant._id?.toString(),
+      participant.id,
       ChatEventEnum.LEAVE_CHAT_EVENT,
-      chat
+      groupChat
     );
   });
 
@@ -439,37 +412,51 @@ const deleteGroupChat = asyncHandler(async (req, res) => {
 const deleteOneOnOneChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // check for chat existence
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: new mongoose.Types.ObjectId(chatId),
+  // Check for chat existence
+  const chat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
-  const payload = chat[0];
-
-  if (!payload) {
+  if (!chat || chat.isGroupChat) {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  await Chat.findByIdAndDelete(chatId); // delete the chat even if user is not admin because it's a personal chat
+  // Delete the chat
+  await prisma.chat.delete({
+    where: { id: chatId },
+  });
 
   await deleteCascadeChatMessages(chatId); // delete all the messages and attachments associated with the chat
 
-  const otherParticipant = payload?.participants?.find(
-    (participant) => participant?._id.toString() !== req.user._id.toString() // get the other participant in chat for socket
+  // Delete all messages associated with the chat
+  await prisma.message.deleteMany({
+    where: { chatId },
+  });
+
+  // Get the other participant in the chat
+  const otherParticipant = chat.participants.find(
+    (participant) => participant.id !== req.user.id
   );
 
-  // emit event to other participant with left chat as a payload
-  emitSocketEvent(
-    req,
-    otherParticipant._id?.toString(),
-    ChatEventEnum.LEAVE_CHAT_EVENT,
-    payload
-  );
+  // Emit event to the other participant
+  if (otherParticipant) {
+    emitSocketEvent(
+      req,
+      otherParticipant.id,
+      ChatEventEnum.LEAVE_CHAT_EVENT,
+      chat
+    );
+  }
 
   return res
     .status(200)
@@ -479,169 +466,219 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
 const leaveGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // check if chat is a group
-  const groupChat = await Chat.findOne({
-    _id: new mongoose.Types.ObjectId(chatId),
-    isGroupChat: true,
+  // Check if the chat is a group chat
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: true,
+    },
   });
 
-  if (!groupChat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  const existingParticipants = groupChat.participants;
+  // Check if the user is part of the group
+  const isParticipant = groupChat.participants.some(
+    (participant) => participant.id === req.user.id
+  );
 
-  // check if the participant that is leaving the group, is part of the group
-  if (!existingParticipants?.includes(req.user?._id)) {
+  if (!isParticipant) {
     throw new ApiError(400, "You are not a part of this group chat");
   }
 
-  const updatedChat = await Chat.findByIdAndUpdate(
-    chatId,
-    {
-      $pull: {
-        participants: req.user?._id, // leave the group
+  // Remove the user from the group chat
+  const updatedChat = await prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      participants: {
+        disconnect: { id: req.user.id },
       },
     },
-    { new: true }
-  );
-
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: updatedChat._id,
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
-  const payload = chat[0];
-
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+  if (!updatedChat) {
+    throw new ApiError(500, "Failed to leave the group chat");
   }
 
   return res
     .status(200)
-    .json(new ApiResponse(200, payload, "Left a group successfully"));
+    .json(new ApiResponse(200, updatedChat, "Left the group successfully"));
 });
 
+//working fine
 const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
   const { chatId, participantId } = req.params;
 
-  // check if chat is a group
-  const groupChat = await Chat.findOne({
-    _id: new mongoose.Types.ObjectId(chatId),
-    isGroupChat: true,
+  // Check if the chat is a group chat
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: true,
+      admin: true,
+    },
   });
 
-  if (!groupChat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // check if user who is adding is a group admin
-  if (groupChat.admin?.toString() !== req.user._id?.toString()) {
-    throw new ApiError(404, "You are not an admin");
+  // Check if the user performing the action is the group admin
+  if (groupChat.adminId !== req.user.id) {
+    throw new ApiError(403, "You are not an admin");
   }
 
-  const existingParticipants = groupChat.participants;
-
-  // check if the participant that is being added in a part of the group
-  if (existingParticipants?.includes(participantId)) {
-    throw new ApiError(409, "Participant already in a group chat");
-  }
-
-  const updatedChat = await Chat.findByIdAndUpdate(
-    chatId,
-    {
-      $push: {
-        participants: participantId, // add new participant id
-      },
-    },
-    { new: true }
+  // Check if the participant is already in the group
+  const isParticipant = groupChat.participants.some(
+    (participant) => participant.id === participantId
   );
 
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: updatedChat._id,
-      },
-    },
-    ...chatCommonAggregation(),
-  ]);
-
-  const payload = chat[0];
-
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+  if (isParticipant) {
+    throw new ApiError(409, "Participant already in the group chat");
   }
 
-  // emit new chat event to the added participant
-  emitSocketEvent(req, participantId, ChatEventEnum.NEW_CHAT_EVENT, payload);
+  // Add the participant to the group chat
+  const updatedChat = await prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      participants: {
+        connect: { id: participantId },
+      },
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!updatedChat) {
+    throw new ApiError(500, "Failed to update the group chat");
+  }
+
+  // Emit new chat event to the added participant
+  emitSocketEvent(req, participantId, ChatEventEnum.NEW_CHAT_EVENT, updatedChat);
 
   return res
     .status(200)
-    .json(new ApiResponse(200, payload, "Participant added successfully"));
+    .json(new ApiResponse(200, updatedChat, "Participant added successfully"));
 });
 
+//working fine
 const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
   const { chatId, participantId } = req.params;
 
-  // check if chat is a group
-  const groupChat = await Chat.findOne({
-    _id: new mongoose.Types.ObjectId(chatId),
-    isGroupChat: true,
+  // Check if the chat is a group chat
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: true,
+      admin: true,
+    },
   });
 
-  if (!groupChat) {
+  if (!groupChat || !groupChat.isGroupChat) {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // check if user who is deleting is a group admin
-  if (groupChat.admin?.toString() !== req.user._id?.toString()) {
-    throw new ApiError(404, "You are not an admin");
+  // Check if the user performing the action is the group admin
+  if (groupChat.adminId !== req.user.id) {
+    throw new ApiError(403, "You are not an admin");
   }
 
-  const existingParticipants = groupChat.participants;
+  // Check if the participant exists in the group
+  const isParticipant = groupChat.participants.some(
+    (participant) => participant.id === participantId
+  );
 
-  // check if the participant that is being removed in a part of the group
-  if (!existingParticipants?.includes(participantId)) {
+  if (!isParticipant) {
     throw new ApiError(400, "Participant does not exist in the group chat");
   }
 
-  const updatedChat = await Chat.findByIdAndUpdate(
-    chatId,
-    {
-      $pull: {
-        participants: participantId, // remove participant id
+  // Remove the participant from the group chat
+  const updatedChat = await prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      participants: {
+        disconnect: { id: participantId },
       },
     },
-    { new: true }
-  );
-
-  const chat = await Chat.aggregate([
-    {
-      $match: {
-        _id: updatedChat._id,
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
       },
     },
-    ...chatCommonAggregation(),
-  ]);
+  });
 
-  const payload = chat[0];
-
-  if (!payload) {
-    throw new ApiError(500, "Internal server error");
+  if (!updatedChat) {
+    throw new ApiError(500, "Failed to update the group chat");
   }
 
-  // emit leave chat event to the removed participant
-  emitSocketEvent(req, participantId, ChatEventEnum.LEAVE_CHAT_EVENT, payload);
+  // Emit leave chat event to the removed participant
+  emitSocketEvent(req, participantId, ChatEventEnum.LEAVE_CHAT_EVENT, updatedChat);
 
   return res
     .status(200)
-    .json(new ApiResponse(200, payload, "Participant removed successfully"));
+    .json(new ApiResponse(200, updatedChat, "Participant removed successfully"));
 });
 
+//working fine
 const getAllChats = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
