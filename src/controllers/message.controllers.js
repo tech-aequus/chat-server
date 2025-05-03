@@ -13,11 +13,13 @@ import {
 } from "../utils/helpers.js";
 import { redisClient } from "../utils/redisClient.js";
 import { uploadToS3, deleteFromS3 } from "../utils/s3utils.js";
+import { PrismaClient } from "@prisma/client";
 
-/**
- * @description Utility function which returns the pipeline stages to structure the chat message schema with common lookups
- * @returns {mongoose.PipelineStage[]}
- */
+const prisma = new PrismaClient();
+// /**
+//  * @description Utility function which returns the pipeline stages to structure the chat message schema with common lookups
+//  * @returns {mongoose.PipelineStage[]}
+//  */
 const chatMessageCommonAggregation = () => {
   return [
     {
@@ -48,13 +50,25 @@ const chatMessageCommonAggregation = () => {
 const getAllMessages = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  const selectedChat = await Chat.findById(chatId);
+  // Check if the chat exists and the user is a participant
+  const selectedChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: { id: true },
+      },
+    },
+  });
 
   if (!selectedChat) {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  if (!selectedChat.participants?.includes(req.user?._id)) {
+  const isParticipant = selectedChat.participants.some(
+    (participant) => participant.id === req.user.id
+  );
+
+  if (!isParticipant) {
     throw new ApiError(400, "User is not a part of this chat");
   }
 
@@ -74,25 +88,30 @@ const getAllMessages = asyncHandler(async (req, res) => {
         )
       : new Date();
 
-  // Fetch older messages from MongoDB
-  const oldMessages = await ChatMessage.find({
-    chat: chatId,
-    createdAt: { $lt: oldestRedisMessageTimestamp },
-  })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
+  // Fetch older messages from the database
+  const oldMessages = await prisma.chatMessage.findMany({
+    where: {
+      chatId: chatId,
+      createdAt: {
+        lt: oldestRedisMessageTimestamp,
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 50,
+  });
 
   // Combine and sort messages
   const allMessages = [...parsedRecentMessages, ...oldMessages].sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
 
-  // Remove duplicate messages based on _id
+  // Remove duplicate messages based on id
   const uniqueMessages = allMessages.filter(
     (message, index, self) =>
       index ===
-      self.findIndex((t) => t._id.toString() === message._id.toString())
+      self.findIndex((t) => t.id === message.id)
   );
 
   return res
@@ -121,7 +140,15 @@ const sendMessage = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Message content or attachment is required");
     }
 
-    const selectedChat = await Chat.findById(chatId);
+    // Check if the chat exists
+    const selectedChat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        participants: {
+          select: { id: true },
+        },
+      },
+    });
 
     if (!selectedChat) {
       throw new ApiError(404, "Chat does not exist");
@@ -129,6 +156,7 @@ const sendMessage = asyncHandler(async (req, res) => {
 
     const messageFiles = [];
 
+    // Process and upload attachments to S3
     if (req.files && req.files.attachments?.length > 0) {
       console.log(`Processing ${req.files.attachments.length} files`);
 
@@ -151,7 +179,6 @@ const sendMessage = asyncHandler(async (req, res) => {
           messageFiles.push({
             url: s3Url,
             key: key,
-            _id: new mongoose.Types.ObjectId(),
           });
         } catch (error) {
           console.error("Error processing individual file:", {
@@ -164,22 +191,44 @@ const sendMessage = asyncHandler(async (req, res) => {
     }
 
     console.log("Creating message with files:", messageFiles);
-
-    // Create message with S3 attachments
-    const message = await ChatMessage.create({
-      sender: req.user._id,
+    const messageData = {
+      senderId: req.user.id,
       content: content || "",
-      chat: chatId,
-      attachments: messageFiles,
+      chatId: chatId,
+    };
+    
+    // Add attachments only if there are files
+    if (messageFiles.length > 0) {
+      messageData.attachments = {
+        create: messageFiles,
+      };
+    }
+    console.log("Message data:", messageData);
+    // Create the message in the database
+    const message = await prisma.chatMessage.create({
+      data: messageData,
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+        attachments: messageFiles.length > 0,
+      },
     });
 
-    console.log("Message created successfully:", message._id);
+    console.log("Message created successfully:", message.id);
+
+    // Store the message in Redis
     const messageToStore = {
-      _id: message._id,
+      id: message.id,
       sender: message.sender,
       content: message.content,
       attachments: message.attachments,
-      chat: message.chat,
+      chatId: message.chatId,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     };
@@ -190,55 +239,31 @@ const sendMessage = asyncHandler(async (req, res) => {
     );
 
     // Set expiration for Redis message (e.g., 1 hour)
-    await redisClient.expire(`chat:${chatId}:messages`, 60);
+    await redisClient.expire(`chat:${chatId}:messages`, 3600);
 
     // Update the chat's last message
-    const chat = await Chat.findByIdAndUpdate(
-      chatId,
-      {
-        $set: {
-          lastMessage: message._id,
-        },
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        lastMessageId: message.id,
       },
-      { new: true }
-    );
-    // structure the message
-    const messages = await ChatMessage.aggregate([
-      {
-        $match: {
-          _id: new mongoose.Types.ObjectId(message._id),
-        },
-      },
-      ...chatMessageCommonAggregation(),
-    ]);
+    });
 
-    // Store the aggregation result
-    const receivedMessage = messages[0];
+    // Emit socket event about the new message to other participants
+    selectedChat.participants.forEach((participant) => {
+      if (participant.id === req.user.id) return;
 
-    if (!receivedMessage) {
-      throw new ApiError(500, "Internal server error");
-    }
-
-    // logic to emit socket event about the new message created to the other participants
-    chat.participants.forEach((participantObjectId) => {
-      // here the chat is the raw instance of the chat in which participants is the array of object ids of users
-      // avoid emitting event to the user who is sending the message
-      if (participantObjectId.toString() === req.user._id.toString()) return;
-
-      // emit the receive message event to the other participants with received message as the payload
       emitSocketEvent(
         req,
-        participantObjectId.toString(),
+        participant.id,
         ChatEventEnum.MESSAGE_RECEIVED_EVENT,
-        receivedMessage
+        messageToStore
       );
     });
 
     return res
       .status(201)
-      .json(
-        new ApiResponse(201, receivedMessage, "Message saved successfully")
-      );
+      .json(new ApiResponse(201, messageToStore, "Message saved successfully"));
   } catch (error) {
     console.error("Controller error:", {
       message: error.message,
@@ -251,68 +276,91 @@ const sendMessage = asyncHandler(async (req, res) => {
 const deleteMessage = asyncHandler(async (req, res) => {
   const { chatId, messageId } = req.params;
 
-  const chat = await Chat.findOne({
-    _id: new mongoose.Types.ObjectId(chatId),
-    participants: req.user?._id,
+  // Check if the chat exists and the user is a participant
+  const chat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: {
+        select: { id: true },
+      },
+      lastMessage: {
+        select: { id: true },
+      },
+    },
   });
 
   if (!chat) {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  const message = await ChatMessage.findOne({
-    _id: new mongoose.Types.ObjectId(messageId),
+  const isParticipant = chat.participants.some(
+    (participant) => participant.id === req.user.id
+  );
+
+  if (!isParticipant) {
+    throw new ApiError(403, "You are not authorized to delete messages in this chat");
+  }
+
+  // Check if the message exists
+  const message = await prisma.chatMessage.findUnique({
+    where: { id: messageId },
+    include: {
+      attachments: true,
+    },
   });
 
   if (!message) {
     throw new ApiError(404, "Message does not exist");
   }
 
-  if (message.sender.toString() !== req.user._id.toString()) {
-    throw new ApiError(403, "You are not authorized to delete the message");
+  // Check if the user is the sender of the message
+  if (message.senderId !== req.user.id) {
+    throw new ApiError(403, "You are not authorized to delete this message");
   }
 
   // Delete attachments from S3
   if (message.attachments.length > 0) {
-    const deletePromises = message.attachments.map((asset) =>
-      deleteFromS3(asset.key)
+    const deletePromises = message.attachments.map((attachment) =>
+      deleteFromS3(attachment.key)
     );
     await Promise.all(deletePromises);
   }
-  //deleting the message from DB
-  await ChatMessage.deleteOne({
-    _id: new mongoose.Types.ObjectId(messageId),
+
+  // Delete the message from the database
+  await prisma.chatMessage.delete({
+    where: { id: messageId },
   });
 
-  //Updating the last message of the chat to the previous message after deletion if the message deleted was last message
-  if (chat.lastMessage.toString() === message._id.toString()) {
-    const lastMessage = await ChatMessage.findOne(
-      { chat: chatId },
-      {},
-      { sort: { createdAt: -1 } }
-    );
+  // Update the chat's last message if the deleted message was the last message
+  if (chat.lastMessage?.id === messageId) {
+    const lastMessage = await prisma.chatMessage.findFirst({
+      where: { chatId },
+      orderBy: { createdAt: "desc" },
+    });
 
-    await Chat.findByIdAndUpdate(chatId, {
-      lastMessage: lastMessage ? lastMessage?._id : null,
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        lastMessageId: lastMessage ? lastMessage.id : null,
+      },
     });
   }
-  // logic to emit socket event about the message deleted  to the other participants
-  chat.participants.forEach((participantObjectId) => {
-    // here the chat is the raw instance of the chat in which participants is the array of object ids of users
-    // avoid emitting event to the user who is deleting the message
-    if (participantObjectId.toString() === req.user._id.toString()) return;
-    // emit the delete message event to the other participants frontend with delete messageId as the payload
+
+  // Emit socket event about the message deletion to other participants
+  chat.participants.forEach((participant) => {
+    if (participant.id === req.user.id) return;
+
     emitSocketEvent(
       req,
-      participantObjectId.toString(),
+      participant.id,
       ChatEventEnum.MESSAGE_DELETE_EVENT,
-      message
+      { messageId }
     );
   });
 
   return res
     .status(200)
-    .json(new ApiResponse(200, message, "Message deleted successfully"));
+    .json(new ApiResponse(200, { messageId }, "Message deleted successfully"));
 });
 
 export { getAllMessages, sendMessage, deleteMessage };
