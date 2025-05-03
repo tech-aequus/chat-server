@@ -23,9 +23,10 @@ const isEmailRegistered = async (email) => {
 
 const deleteCascadeChatMessages = async (chatId) => {
   // Fetch the messages associated with the chat
-  const messages = await prisma.message.findMany({
+  const messages = await prisma.chatMessage.findMany({
     where: { chatId },
     select: {
+      id: true,
       attachments: true, // Select only the attachments field
     },
   });
@@ -39,11 +40,25 @@ const deleteCascadeChatMessages = async (chatId) => {
 
   // Remove attachment files from the local storage
   attachments.forEach((attachment) => {
-    removeLocalFile(attachment.localPath);
+    if (attachment.localPath) {
+      removeLocalFile(attachment.localPath);
+    } else {
+      console.warn("Attachment missing localPath:", attachment);
+    }
+  });
+
+  const messageIds = messages.map((message) => message.id).filter(Boolean); // Filter out undefined values
+  console.log("Message IDs to delete:", messageIds);
+  await prisma.messageAttachment.deleteMany({
+    where: {
+      id: {
+        in: messageIds,
+      },
+    },
   });
 
   // Delete all the messages
-  await prisma.message.deleteMany({
+  await prisma.chatMessage.deleteMany({
     where: { chatId },
   });
 };
@@ -431,12 +446,13 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Chat does not exist");
   }
 
+  // delete all the messages and attachments associated with the chat
+  await deleteCascadeChatMessages(chatId);
+
   // Delete the chat
   await prisma.chat.delete({
     where: { id: chatId },
   });
-
-  await deleteCascadeChatMessages(chatId); // delete all the messages and attachments associated with the chat
 
   // Delete all messages associated with the chat
   await prisma.message.deleteMany({
