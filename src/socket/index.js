@@ -65,9 +65,14 @@ const initializeSocketIO = (io) => {
 
       const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET); // decode the token
 
-      const user = await User.findById(decodedToken?._id).select(
-        "-password -refreshToken -emailVerificationToken -emailVerificationExpiry"
-      );
+      const user = await prisma.user.findUnique({
+        where: { id: decodedToken?.id },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      });
 
       // retrieve the user
       if (!user) {
@@ -78,9 +83,9 @@ const initializeSocketIO = (io) => {
       // We are creating a room with user id so that if user is joined but does not have any active chat going on.
       // still we want to emit some socket events to the user.
       // so that the client can catch the event and show the notifications.
-      socket.join(user._id.toString());
+      socket.join(user.id.toString());
       socket.emit(ChatEventEnum.CONNECTED_EVENT); // emit the connected event so that client is aware
-      console.log("User connected 🗼. userId: ", user._id.toString());
+      console.log("User connected 🗼. userId: ", user.id.toString());
 
       // Common events that needs to be mounted on the initialization
       mountJoinChatEvent(socket);
@@ -89,20 +94,20 @@ const initializeSocketIO = (io) => {
 
       socket.on(ChatEventEnum.DISCONNECT_EVENT, async () => {
         try {
-          console.log("User has disconnected 🚫. userId: " + socket.user?._id);
+          console.log("User has disconnected 🚫. userId: " + socket.user?.id);
           console.log(socket.rooms);
           const rooms = Object.keys(socket.rooms);
 
           for (const room of rooms) {
-            if (room !== socket.user?._id.toString()) {
+            if (room !== socket.user?.id.toString()) {
               await cleanupRedisForChat(room);
               console.log(`Cleaned up Redis for chat: ${room}`);
             }
             socket.leave(room);
           }
 
-          if (socket.user?._id) {
-            const userRoom = socket.user._id.toString();
+          if (socket.user?.id) {
+            const userRoom = socket.user.id.toString();
             socket.leave(userRoom);
             await redisSub.unsubscribe(`user:${userRoom}`);
             console.log(`Unsubscribed from Redis channel: user:${userRoom}`);
@@ -112,13 +117,13 @@ const initializeSocketIO = (io) => {
           // For example, you might want to update user status in the database
 
           console.log(
-            "Disconnect process completed for user: " + socket.user?._id
+            "Disconnect process completed for user: " + socket.user?.id
           );
         } catch (error) {
           console.error("Error during disconnect process:", error);
         }
       });
-      redisSub.subscribe(`user:${socket.user._id}`);
+      redisSub.subscribe(`user:${socket.user.id}`);
 
       // Handle incoming messages
       socket.on(ChatEventEnum.MESSAGE_RECEIVED_EVENT, async (data) => {
@@ -127,7 +132,7 @@ const initializeSocketIO = (io) => {
           `chat:${chatId}`,
           JSON.stringify({
             event: ChatEventEnum.MESSAGE_RECEIVED_EVENT,
-            data: { senderId: socket.user._id, message },
+            data: { senderId: socket.user.id, message },
           })
         );
       });
@@ -138,7 +143,7 @@ const initializeSocketIO = (io) => {
         if (channel.startsWith("chat:")) {
           const chatId = channel.split(":")[1];
           socket.to(chatId).emit(parsedMessage.event, parsedMessage.data);
-        } else if (channel === `user:${socket.user._id}`) {
+        } else if (channel === `user:${socket.user.id}`) {
           socket.emit(parsedMessage.event, parsedMessage.data);
         }
       });
