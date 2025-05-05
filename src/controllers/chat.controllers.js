@@ -21,6 +21,7 @@ const isEmailRegistered = async (email) => {
   }
 };
 
+//working fine
 const deleteCascadeChatMessages = async (chatId) => {
   // Fetch the messages associated with the chat
   const messages = await prisma.chatMessage.findMany({
@@ -366,6 +367,7 @@ const renameGroupChat = asyncHandler(async (req, res) => {
     );
 });
 
+//working fine
 const deleteGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
@@ -424,6 +426,7 @@ const deleteGroupChat = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Group chat deleted successfully"));
 });
 
+//working fine
 const deleteOneOnOneChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
@@ -479,6 +482,7 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Chat deleted successfully"));
 });
 
+//
 const leaveGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
