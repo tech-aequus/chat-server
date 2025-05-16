@@ -36,13 +36,14 @@ CREATE TABLE "MessageAttachment" (
 -- CreateTable
 CREATE TABLE "_UserChats" (
     "A" TEXT NOT NULL,
-    "B" TEXT NOT NULL,
-
-    CONSTRAINT "_UserChats_AB_pkey" PRIMARY KEY ("A","B")
+    "B" TEXT NOT NULL
 );
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Chat_lastMessageId_key" ON "Chat"("lastMessageId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "_UserChats_AB_unique" ON "_UserChats"("A", "B");
 
 -- CreateIndex
 CREATE INDEX "_UserChats_B_index" ON "_UserChats"("B");

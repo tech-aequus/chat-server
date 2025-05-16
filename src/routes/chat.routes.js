@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   addNewParticipantInGroupChat,
+  createAFactionGroupChat,
   createAGroupChat,
   createOrGetAOneOnOneChat,
   deleteGroupChat,
@@ -15,6 +16,7 @@ import {
 } from "../controllers/chat.controllers.js";
 import { verifyJWT } from "../middlewares/auth.middlewares.js";
 import {
+  createAFactionGroupChatValidator,
   createAGroupChatValidator,
   updateGroupChatNameValidator,
 } from "../validators/chat.validator.js";
@@ -40,6 +42,10 @@ router
 router
   .route("/group")
   .post(createAGroupChatValidator(), validate, createAGroupChat);
+
+router
+  .route("/faction/createChat")
+  .post(createAFactionGroupChatValidator(), validate, createAFactionGroupChat);
 
 router
   .route("/group/:chatId")

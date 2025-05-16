@@ -14,8 +14,17 @@ const createAGroupChatValidator = () => {
   ];
 };
 
+const createAFactionGroupChatValidator = () => {
+  return [
+    body("name").trim().notEmpty().withMessage("Group name is required"),
+    body("factionId")
+    .isUUID()
+    .withMessage("FactionId must be a valid UUID"),
+  ];
+};
+
 const updateGroupChatNameValidator = () => {
   return [body("name").trim().notEmpty().withMessage("Group name is required")];
 };
 
-export { createAGroupChatValidator, updateGroupChatNameValidator };
+export { createAGroupChatValidator, createAFactionGroupChatValidator, updateGroupChatNameValidator };

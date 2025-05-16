@@ -248,6 +248,72 @@ const createAGroupChat = asyncHandler(async (req, res) => {
   }
 });
 
+const createAFactionGroupChat = asyncHandler(async (req, res) => {
+  const { name, factionId } = req.body;
+  console.log("Participants:", factionId);
+
+  const members = [req.user.id]; // Check for duplicates
+  console.log("Members:", members);
+
+  // if (members.length < 3) {
+  //   // Ensure group chat has at least 3 members (including admin)
+  //   throw new ApiError(
+  //     400,
+  //     "A group chat must have at least 3 unique participants, including the creator."
+  //   );
+  // }
+
+  try {
+    // Create a group chat with provided members
+    const groupChat = await prisma.chat.create({
+      data: {
+        name,
+        isGroupChat: true,
+        participants: {
+          connect: members.map((id) => ({ id })), // Connect participants by their IDs
+        },
+
+        admin: {
+          connect: { id: req.user.id }, // Use the admin relation
+        }, // Set the creator as the admin
+        
+        faction: {
+          connect: { id: factionId }, // Connect the faction by its ID
+        },
+        factionId: factionId,
+      },
+      include: {
+        participants: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Emit socket event about the new group chat added to the participants
+    groupChat.participants.forEach((participant) => {
+      if (participant.id === req.user.id) return; // Skip the creator
+      emitSocketEvent(
+        req,
+        participant.id,
+        ChatEventEnum.NEW_CHAT_EVENT,
+        groupChat
+      );
+    });
+
+    return res
+      .status(201)
+      .json(new ApiResponse(201, groupChat, "Group chat created successfully"));
+  } catch (error) {
+    console.error("Error creating group chat:", error);
+    throw new ApiError(500, "Failed to create group chat");
+  }
+});
+
 //working fine
 const getGroupChatDetails = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
@@ -751,6 +817,7 @@ const getAllChats = asyncHandler(async (req, res) => {
 export {
   addNewParticipantInGroupChat,
   createAGroupChat,
+  createAFactionGroupChat,
   createOrGetAOneOnOneChat,
   deleteGroupChat,
   deleteOneOnOneChat,
