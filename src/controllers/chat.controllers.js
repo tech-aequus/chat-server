@@ -58,6 +58,12 @@ const deleteCascadeChatMessages = async (chatId) => {
     },
   });
 
+  await prisma.messageAttachment.deleteMany({
+  where: {
+    messageId: { in: messageIds, },
+  },
+})
+
   // Delete all the messages
   await prisma.chatMessage.deleteMany({
     where: { chatId },
