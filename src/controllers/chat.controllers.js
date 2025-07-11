@@ -820,8 +820,84 @@ const getAllChats = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, chats || [], "User chats fetched successfully!"));
 });
 
+const addNewFactionMemberToGroupChat = asyncHandler(async (req, res) => {
+  const { chatId, participantId } = req.params;
+
+  // Check if the chat is a group chat
+  const groupChat = await prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      participants: true,
+      admin: true,
+    },
+  });
+
+  if (!groupChat || !groupChat.isGroupChat) {
+    throw new ApiError(404, "Group chat does not exist");
+  }
+
+  // Check if the participant is already in the group
+  const isParticipant = groupChat.participants.some(
+    (participant) => participant.id === participantId
+  );
+
+  if (isParticipant) {
+    throw new ApiError(409, "Participant already in the group chat");
+  }
+
+  // Add the participant to the group chat
+  const updatedChat = await prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      participants: {
+        connect: { id: participantId },
+      },
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!updatedChat) {
+    throw new ApiError(500, "Failed to update the group chat");
+  }
+
+  // Emit new chat event to the added participant
+  emitSocketEvent(
+    req,
+    participantId,
+    ChatEventEnum.NEW_CHAT_EVENT,
+    updatedChat
+  );
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, updatedChat, "Participant added successfully"));
+});
+
+
 export {
   addNewParticipantInGroupChat,
+  addNewFactionMemberToGroupChat,
   createAGroupChat,
   createAFactionGroupChat,
   createOrGetAOneOnOneChat,
