@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  addNewFactionMemberToGroupChat,
   addNewParticipantInGroupChat,
   createAFactionGroupChat,
   createAGroupChat,
@@ -72,6 +73,16 @@ router
     validate,
     removeParticipantFromGroupChat
   );
+
+router
+  .route("/faction/:chatId/:participantId")
+  .post(
+    mongoIdPathVariableValidator("chatId"),
+    mongoIdPathVariableValidator("participantId"),
+    validate,
+    addNewFactionMemberToGroupChat
+  );
+
 
 router
   .route("/leave/group/:chatId")
