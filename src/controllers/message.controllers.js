@@ -257,7 +257,7 @@ const sendMessage = asyncHandler(async (req, res) => {
 
       emitSocketEvent(
         req,
-        participant.id,
+        chatId,
         ChatEventEnum.MESSAGE_RECEIVED_EVENT,
         messageToStore
       );
