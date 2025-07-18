@@ -59,10 +59,10 @@ const deleteCascadeChatMessages = async (chatId) => {
   });
 
   await prisma.messageAttachment.deleteMany({
-  where: {
-    messageId: { in: messageIds, },
-  },
-})
+    where: {
+      messageId: { in: messageIds },
+    },
+  });
 
   // Delete all the messages
   await prisma.chatMessage.deleteMany({
@@ -176,12 +176,7 @@ const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
   // Emit socket event about the new chat added to the participants
   newChat.participants.forEach((participant) => {
     if (participant.id === req.user.id) return; // Skip the creator
-    emitSocketEvent(
-      req,
-      participant.id,
-      ChatEventEnum.NEW_CHAT_EVENT,
-      newChat
-    );
+    emitSocketEvent(req, participant.id, ChatEventEnum.NEW_CHAT_EVENT, newChat);
   });
 
   return res
@@ -282,7 +277,7 @@ const createAFactionGroupChat = asyncHandler(async (req, res) => {
         admin: {
           connect: { id: req.user.id }, // Use the admin relation
         }, // Set the creator as the admin
-        
+
         faction: {
           connect: { id: factionId }, // Connect the faction by its ID
         },
@@ -435,7 +430,11 @@ const renameGroupChat = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(
-      new ApiResponse(200, updatedGroupChat, "Group chat name updated successfully")
+      new ApiResponse(
+        200,
+        updatedGroupChat,
+        "Group chat name updated successfully"
+      )
     );
 });
 
@@ -558,6 +557,7 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
 const leaveGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
+  console.log(req.params);
   // Check if the chat is a group chat
   const groupChat = await prisma.chat.findUnique({
     where: { id: chatId },
@@ -688,7 +688,12 @@ const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
   }
 
   // Emit new chat event to the added participant
-  emitSocketEvent(req, participantId, ChatEventEnum.NEW_CHAT_EVENT, updatedChat);
+  emitSocketEvent(
+    req,
+    participantId,
+    ChatEventEnum.NEW_CHAT_EVENT,
+    updatedChat
+  );
 
   return res
     .status(200)
@@ -763,11 +768,18 @@ const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
   }
 
   // Emit leave chat event to the removed participant
-  emitSocketEvent(req, participantId, ChatEventEnum.LEAVE_CHAT_EVENT, updatedChat);
+  emitSocketEvent(
+    req,
+    participantId,
+    ChatEventEnum.LEAVE_CHAT_EVENT,
+    updatedChat
+  );
 
   return res
     .status(200)
-    .json(new ApiResponse(200, updatedChat, "Participant removed successfully"));
+    .json(
+      new ApiResponse(200, updatedChat, "Participant removed successfully")
+    );
 });
 
 //working fine
@@ -817,7 +829,74 @@ const getAllChats = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(new ApiResponse(200, chats || [], "User chats fetched successfully!"));
+    .json(
+      new ApiResponse(200, chats || [], "User chats fetched successfully!")
+    );
+});
+const getChat = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const chatId = req.params.chatId;
+
+  const chat = await prisma.chat.findUnique({
+    where: {
+      id: chatId,
+    },
+    include: {
+      participants: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+      lastMessage: {
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
+          },
+        },
+      },
+      admin: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  // If chat doesn't exist
+  if (!chat) {
+    return res.status(404).json(new ApiResponse(404, null, "Chat not found"));
+  }
+
+  // Check if user is a participant
+  const isParticipant = chat.participants.some(
+    (participant) => participant.id === userId
+  );
+
+  if (!isParticipant) {
+    return res
+      .status(403)
+      .json(
+        new ApiResponse(
+          403,
+          null,
+          "Access denied: You are not a participant in this chat"
+        )
+      );
+  }
+
+  // Optionally remove participant IDs before returning the chat
+  return res
+    .status(200)
+    .json(new ApiResponse(200, chat, "User chat fetched successfully!"));
 });
 
 const addNewFactionMemberToGroupChat = asyncHandler(async (req, res) => {
@@ -894,7 +973,6 @@ const addNewFactionMemberToGroupChat = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, updatedChat, "Participant added successfully"));
 });
 
-
 export {
   addNewParticipantInGroupChat,
   addNewFactionMemberToGroupChat,
@@ -904,6 +982,7 @@ export {
   deleteGroupChat,
   deleteOneOnOneChat,
   getAllChats,
+  getChat,
   getGroupChatDetails,
   leaveGroupChat,
   removeParticipantFromGroupChat,

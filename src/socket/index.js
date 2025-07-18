@@ -127,6 +127,7 @@ const initializeSocketIO = (io) => {
 
       // Handle incoming messages
       socket.on(ChatEventEnum.MESSAGE_RECEIVED_EVENT, async (data) => {
+        console.log("incoming message", data);
         const { chatId, message } = data;
         await redisPub.publish(
           `chat:${chatId}`,

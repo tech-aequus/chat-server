@@ -8,6 +8,7 @@ import {
   deleteGroupChat,
   deleteOneOnOneChat,
   getAllChats,
+  getChat,
   getGroupChatDetails,
   isEmailRegistered,
   leaveGroupChat,
@@ -29,6 +30,7 @@ const router = Router();
 router.use(verifyJWT);
 
 router.route("/").get(getAllChats);
+router.route("/:chatId").get(getChat);
 
 router.route("/users").get(searchAvailableUsers);
 router.route("/isEmailRegistered").get(isEmailRegistered);
@@ -82,7 +84,6 @@ router
     validate,
     addNewFactionMemberToGroupChat
   );
-
 
 router
   .route("/leave/group/:chatId")

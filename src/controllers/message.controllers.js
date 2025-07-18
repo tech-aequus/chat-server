@@ -102,16 +102,18 @@ const getAllMessages = asyncHandler(async (req, res) => {
     take: 50,
   });
 
-  // Combine and sort messages
-  const allMessages = [...parsedRecentMessages, ...oldMessages].sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  // Combine Redis and DB messages
+  const allMessages = [...parsedRecentMessages, ...oldMessages];
+
+  // Sort messages from oldest to newest
+  const sortedMessages = allMessages.sort(
+    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
   );
 
   // Remove duplicate messages based on id
-  const uniqueMessages = allMessages.filter(
+  const uniqueMessages = sortedMessages.filter(
     (message, index, self) =>
-      index ===
-      self.findIndex((t) => t.id === message.id)
+      index === self.findIndex((t) => t.id === message.id)
   );
 
   return res
@@ -196,7 +198,7 @@ const sendMessage = asyncHandler(async (req, res) => {
       content: content || "",
       chatId: chatId,
     };
-    
+
     // Add attachments only if there are files
     if (messageFiles.length > 0) {
       messageData.attachments = {
@@ -298,7 +300,10 @@ const deleteMessage = asyncHandler(async (req, res) => {
   );
 
   if (!isParticipant) {
-    throw new ApiError(403, "You are not authorized to delete messages in this chat");
+    throw new ApiError(
+      403,
+      "You are not authorized to delete messages in this chat"
+    );
   }
 
   // Check if the message exists
@@ -350,12 +355,9 @@ const deleteMessage = asyncHandler(async (req, res) => {
   chat.participants.forEach((participant) => {
     if (participant.id === req.user.id) return;
 
-    emitSocketEvent(
-      req,
-      participant.id,
-      ChatEventEnum.MESSAGE_DELETE_EVENT,
-      { messageId }
-    );
+    emitSocketEvent(req, participant.id, ChatEventEnum.MESSAGE_DELETE_EVENT, {
+      messageId,
+    });
   });
 
   return res
