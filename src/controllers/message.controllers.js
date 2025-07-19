@@ -14,6 +14,7 @@ import {
 import { redisClient } from "../utils/redisClient.js";
 import { uploadToS3, deleteFromS3 } from "../utils/s3utils.js";
 import { PrismaClient } from "@prisma/client";
+import { getChatParticipantIds } from "../utils/chatParticpantIds.js";
 
 const prisma = new PrismaClient();
 // /**
@@ -50,29 +51,21 @@ const chatMessageCommonAggregation = () => {
 const getAllMessages = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // Check if the chat exists and the user is a participant
-  const selectedChat = await prisma.chat.findUnique({
-    where: { id: chatId },
-    include: {
-      participants: {
-        select: { id: true },
-      },
-    },
-  });
+  console.log("Fetching messages for chat:", chatId);
 
-  if (!selectedChat) {
+  // ✅ Fetch participants via Redis or DB
+  const participants = await getChatParticipantIds(chatId);
+  console.log("Participants fetched:", participants);
+  if (!participants || participants.length === 0) {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  const isParticipant = selectedChat.participants.some(
-    (participant) => participant.id === req.user.id
-  );
-
-  if (!isParticipant) {
+  // ✅ Authorization check using cached participants
+  if (!participants.includes(req.user.id)) {
     throw new ApiError(400, "User is not a part of this chat");
   }
 
-  // Fetch recent messages from Redis
+  // ✅ Fetch recent messages from Redis
   const recentMessages = await redisClient.lrange(
     `chat:${chatId}:messages`,
     0,
@@ -80,7 +73,6 @@ const getAllMessages = asyncHandler(async (req, res) => {
   );
   const parsedRecentMessages = recentMessages.map((msg) => JSON.parse(msg));
 
-  // Get the timestamp of the oldest message in Redis
   const oldestRedisMessageTimestamp =
     parsedRecentMessages.length > 0
       ? new Date(
@@ -88,29 +80,22 @@ const getAllMessages = asyncHandler(async (req, res) => {
         )
       : new Date();
 
-  // Fetch older messages from the database
+  // ✅ Fetch older messages from database
   const oldMessages = await prisma.chatMessage.findMany({
     where: {
-      chatId: chatId,
-      createdAt: {
-        lt: oldestRedisMessageTimestamp,
-      },
+      chatId,
+      createdAt: { lt: oldestRedisMessageTimestamp },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
     take: 50,
   });
 
-  // Combine Redis and DB messages
+  // ✅ Combine and sort messages
   const allMessages = [...parsedRecentMessages, ...oldMessages];
-
-  // Sort messages from oldest to newest
   const sortedMessages = allMessages.sort(
     (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
   );
 
-  // Remove duplicate messages based on id
   const uniqueMessages = sortedMessages.filter(
     (message, index, self) =>
       index === self.findIndex((t) => t.id === message.id)
@@ -128,151 +113,93 @@ const getAllMessages = asyncHandler(async (req, res) => {
 });
 
 const sendMessage = asyncHandler(async (req, res) => {
-  try {
-    const { chatId } = req.params;
-    const { content } = req.body;
+  const { chatId } = req.params;
+  const { content } = req.body;
 
-    console.log("Received request:", {
-      chatId,
-      content,
-      files: req.files,
-    });
+  if (!content && !req.files?.attachments?.length) {
+    throw new ApiError(400, "Message content or attachment is required");
+  }
 
-    if (!content && !req.files?.attachments?.length) {
-      throw new ApiError(400, "Message content or attachment is required");
-    }
+  const participantIds = await getChatParticipantIds(chatId);
 
-    // Check if the chat exists
-    const selectedChat = await prisma.chat.findUnique({
-      where: { id: chatId },
-      include: {
-        participants: {
-          select: { id: true },
-        },
-      },
-    });
+  if (!participantIds.includes(req.user.id)) {
+    throw new ApiError(403, "You are not part of this chat");
+  }
 
-    if (!selectedChat) {
-      throw new ApiError(404, "Chat does not exist");
-    }
+  const messageToStore = {
+    id: crypto.randomUUID(),
+    sender: {
+      id: req.user.id,
+      name: req.user.name,
+      email: req.user.email,
+      image: req.user.image,
+    },
+    content: content || "",
+    attachments: [],
+    chatId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 
-    const messageFiles = [];
+  // ✅ Immediately emit message to all participants (no Redis wait)
+  participantIds.forEach((participantId) => {
+    emitSocketEvent(
+      req,
+      participantId,
+      ChatEventEnum.MESSAGE_RECEIVED_EVENT,
+      messageToStore
+    );
+  });
 
-    // Process and upload attachments to S3
-    if (req.files && req.files.attachments?.length > 0) {
-      console.log(`Processing ${req.files.attachments.length} files`);
+  // ✅ Immediately respond to sender
+  res.status(201).json(new ApiResponse(201, messageToStore, "Message sent"));
 
-      for (const file of req.files.attachments) {
-        try {
-          console.log("Processing file:", {
-            filename: file.originalname,
-            size: file.size,
-            mimetype: file.mimetype,
-          });
+  // ⚙️ Background tasks (non-blocking)
+  (async () => {
+    try {
+      // 1. Cache message in Redis (latest 50)
+      await redisClient.lpush(
+        `chat:${chatId}:messages`,
+        JSON.stringify(messageToStore)
+      );
+      await redisClient.ltrim(`chat:${chatId}:messages`, 0, 49);
 
+      // 2. Handle attachments if any
+      const messageFiles = [];
+
+      if (req.files?.attachments?.length > 0) {
+        for (const file of req.files.attachments) {
           const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
           const s3Url = await uploadToS3(file, key);
-
-          console.log("File uploaded successfully:", {
-            key,
-            url: s3Url,
-          });
-
-          messageFiles.push({
-            url: s3Url,
-            key: key,
-          });
-        } catch (error) {
-          console.error("Error processing individual file:", {
-            filename: file.originalname,
-            error: error.message,
-          });
-          throw error;
+          messageFiles.push({ url: s3Url, key });
         }
+        messageToStore.attachments = messageFiles;
       }
-    }
 
-    console.log("Creating message with files:", messageFiles);
-    const messageData = {
-      senderId: req.user.id,
-      content: content || "",
-      chatId: chatId,
-    };
-
-    // Add attachments only if there are files
-    if (messageFiles.length > 0) {
-      messageData.attachments = {
-        create: messageFiles,
-      };
-    }
-    console.log("Message data:", messageData);
-    // Create the message in the database
-    const message = await prisma.chatMessage.create({
-      data: messageData,
-      include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
+      // 3. Save message in DB
+      await prisma.chatMessage.create({
+        data: {
+          id: messageToStore.id,
+          senderId: req.user.id,
+          content: messageToStore.content,
+          chatId,
+          createdAt: messageToStore.createdAt,
+          updatedAt: messageToStore.updatedAt,
+          attachments: {
+            create: messageFiles,
           },
         },
-        attachments: messageFiles.length > 0,
-      },
-    });
+      });
 
-    console.log("Message created successfully:", message.id);
-
-    // Store the message in Redis
-    const messageToStore = {
-      id: message.id,
-      sender: message.sender,
-      content: message.content,
-      attachments: message.attachments,
-      chatId: message.chatId,
-      createdAt: message.createdAt,
-      updatedAt: message.updatedAt,
-    };
-
-    await redisClient.lpush(
-      `chat:${chatId}:messages`,
-      JSON.stringify(messageToStore)
-    );
-
-    // Set expiration for Redis message (e.g., 1 hour)
-    await redisClient.expire(`chat:${chatId}:messages`, 3600);
-
-    // Update the chat's last message
-    await prisma.chat.update({
-      where: { id: chatId },
-      data: {
-        lastMessageId: message.id,
-      },
-    });
-
-    // Emit socket event about the new message to other participants
-    selectedChat.participants.forEach((participant) => {
-      if (participant.id === req.user.id) return;
-
-      emitSocketEvent(
-        req,
-        chatId,
-        ChatEventEnum.MESSAGE_RECEIVED_EVENT,
-        messageToStore
-      );
-    });
-
-    return res
-      .status(201)
-      .json(new ApiResponse(201, messageToStore, "Message saved successfully"));
-  } catch (error) {
-    console.error("Controller error:", {
-      message: error.message,
-      stack: error.stack,
-    });
-    throw new ApiError(500, `Error uploading files to S3: ${error.message}`);
-  }
+      // 4. Update chat's last message
+      await prisma.chat.update({
+        where: { id: chatId },
+        data: { lastMessageId: messageToStore.id },
+      });
+    } catch (error) {
+      console.error("Background error (sendMessage):", error);
+    }
+  })();
 });
 
 const deleteMessage = asyncHandler(async (req, res) => {
