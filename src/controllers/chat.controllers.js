@@ -3,8 +3,10 @@ import { emitSocketEvent } from "../socket/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { updateChatParticipantCache } from "../utils/chatParticpantIds.js";
 import { removeLocalFile } from "../utils/helpers.js";
 import { PrismaClient } from "@prisma/client";
+import { redisClient } from "../utils/redisClient.js";
 
 const prisma = new PrismaClient();
 
@@ -185,10 +187,10 @@ const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
 });
 
 //working fine
+
 const createAGroupChat = asyncHandler(async (req, res) => {
   const { name, participants } = req.body;
 
-  // Check if user is not sending himself as a participant. This will be done manually
   if (participants.includes(req.user.id)) {
     throw new ApiError(
       400,
@@ -196,10 +198,9 @@ const createAGroupChat = asyncHandler(async (req, res) => {
     );
   }
 
-  const members = [...new Set([...participants, req.user.id])]; // Check for duplicates
+  const members = [...new Set([...participants, req.user.id])];
 
   if (members.length < 3) {
-    // Ensure group chat has at least 3 members (including admin)
     throw new ApiError(
       400,
       "A group chat must have at least 3 unique participants, including the creator."
@@ -207,15 +208,14 @@ const createAGroupChat = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Create a group chat with provided members
     const groupChat = await prisma.chat.create({
       data: {
         name,
         isGroupChat: true,
         participants: {
-          connect: members.map((id) => ({ id })), // Connect participants by their IDs
+          connect: members.map((id) => ({ id })),
         },
-        adminId: req.user.id, // Set the creator as the admin
+        adminId: req.user.id,
       },
       include: {
         participants: {
@@ -229,12 +229,16 @@ const createAGroupChat = asyncHandler(async (req, res) => {
       },
     });
 
-    // Emit socket event about the new group chat added to the participants
-    groupChat.participants.forEach((participant) => {
-      if (participant.id === req.user.id) return; // Skip the creator
+    // Cache participant IDs
+    const participantIds = groupChat.participants.map((p) => p.id);
+    await updateChatParticipantCache(groupChat.id, participantIds);
+
+    // Emit socket events using cached IDs
+    participantIds.forEach((participantId) => {
+      if (participantId === req.user.id) return;
       emitSocketEvent(
         req,
-        participant.id,
+        participantId,
         ChatEventEnum.NEW_CHAT_EVENT,
         groupChat
       );
@@ -251,35 +255,23 @@ const createAGroupChat = asyncHandler(async (req, res) => {
 
 const createAFactionGroupChat = asyncHandler(async (req, res) => {
   const { name, factionId } = req.body;
-  console.log("Participants:", factionId);
 
-  const members = [req.user.id]; // Check for duplicates
-  console.log("Members:", members);
-
-  // if (members.length < 3) {
-  //   // Ensure group chat has at least 3 members (including admin)
-  //   throw new ApiError(
-  //     400,
-  //     "A group chat must have at least 3 unique participants, including the creator."
-  //   );
-  // }
+  const members = [req.user.id]; // Assuming only the creator is added for now
 
   try {
-    // Create a group chat with provided members
+    // Create a faction group chat
     const groupChat = await prisma.chat.create({
       data: {
         name,
         isGroupChat: true,
         participants: {
-          connect: members.map((id) => ({ id })), // Connect participants by their IDs
+          connect: members.map((id) => ({ id })), // Connect participants
         },
-
         admin: {
-          connect: { id: req.user.id }, // Use the admin relation
-        }, // Set the creator as the admin
-
+          connect: { id: req.user.id },
+        },
         faction: {
-          connect: { id: factionId }, // Connect the faction by its ID
+          connect: { id: factionId },
         },
         factionId: factionId,
       },
@@ -295,9 +287,13 @@ const createAFactionGroupChat = asyncHandler(async (req, res) => {
       },
     });
 
-    // Emit socket event about the new group chat added to the participants
+    // ⚡️ Update Redis participant cache
+    const participantIds = groupChat.participants.map((p) => p.id);
+    await updateChatParticipantCache(groupChat.id, participantIds);
+
+    // Emit socket events to participants (optional here)
     groupChat.participants.forEach((participant) => {
-      if (participant.id === req.user.id) return; // Skip the creator
+      if (participant.id === req.user.id) return;
       emitSocketEvent(
         req,
         participant.id,
@@ -310,8 +306,8 @@ const createAFactionGroupChat = asyncHandler(async (req, res) => {
       .status(201)
       .json(new ApiResponse(201, groupChat, "Group chat created successfully"));
   } catch (error) {
-    console.error("Error creating group chat:", error);
-    throw new ApiError(500, "Failed to create group chat");
+    console.error("Error creating faction group chat:", error);
+    throw new ApiError(500, "Failed to create faction group chat");
   }
 });
 
@@ -442,22 +438,14 @@ const renameGroupChat = asyncHandler(async (req, res) => {
 const deleteGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // Check for the group chat existence
   const groupChat = await prisma.chat.findUnique({
     where: { id: chatId },
     include: {
       participants: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+        select: { id: true },
       },
       admin: {
-        select: {
-          id: true,
-        },
+        select: { id: true },
       },
     },
   });
@@ -466,24 +454,20 @@ const deleteGroupChat = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // Check if the user who is deleting is the group admin
   if (groupChat.admin.id !== req.user.id) {
     throw new ApiError(403, "Only admin can delete the group");
   }
 
-  // Delete the group chat
-  await prisma.chat.delete({
-    where: { id: chatId },
-  });
+  await prisma.chat.delete({ where: { id: chatId } });
   await deleteCascadeChatMessages(chatId);
-  // Delete all messages associated with the group chat
-  await prisma.message.deleteMany({
-    where: { chatId },
-  });
+  await prisma.message.deleteMany({ where: { chatId } });
 
-  // Emit socket event about the group chat deletion to the participants
+  // ⚡ Clear Redis Cache
+  await redisClient.del(`chat:${chatId}:participants`);
+
+  // Notify participants (except the admin)
   groupChat.participants.forEach((participant) => {
-    if (participant.id === req.user.id) return; // Skip the admin who is deleting the chat
+    if (participant.id === req.user.id) return;
     emitSocketEvent(
       req,
       participant.id,
@@ -496,22 +480,15 @@ const deleteGroupChat = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, {}, "Group chat deleted successfully"));
 });
-
 //working fine
 const deleteOneOnOneChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  // Check for chat existence
   const chat = await prisma.chat.findUnique({
     where: { id: chatId },
     include: {
       participants: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+        select: { id: true },
       },
     },
   });
@@ -520,25 +497,18 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Chat does not exist");
   }
 
-  // delete all the messages and attachments associated with the chat
   await deleteCascadeChatMessages(chatId);
 
-  // Delete the chat
-  await prisma.chat.delete({
-    where: { id: chatId },
-  });
+  await prisma.chat.delete({ where: { id: chatId } });
+  await prisma.message.deleteMany({ where: { chatId } });
 
-  // Delete all messages associated with the chat
-  await prisma.message.deleteMany({
-    where: { chatId },
-  });
+  // ⚡ Clear Redis Cache
+  await redisClient.del(`chat:${chatId}:participants`);
 
-  // Get the other participant in the chat
   const otherParticipant = chat.participants.find(
     (participant) => participant.id !== req.user.id
   );
 
-  // Emit event to the other participant
   if (otherParticipant) {
     emitSocketEvent(
       req,
@@ -624,7 +594,6 @@ const leaveGroupChat = asyncHandler(async (req, res) => {
 const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
   const { chatId, participantId } = req.params;
 
-  // Check if the chat is a group chat
   const groupChat = await prisma.chat.findUnique({
     where: { id: chatId },
     include: {
@@ -637,12 +606,10 @@ const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // Check if the user performing the action is the group admin
   if (groupChat.adminId !== req.user.id) {
     throw new ApiError(403, "You are not an admin");
   }
 
-  // Check if the participant is already in the group
   const isParticipant = groupChat.participants.some(
     (participant) => participant.id === participantId
   );
@@ -651,7 +618,6 @@ const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
     throw new ApiError(409, "Participant already in the group chat");
   }
 
-  // Add the participant to the group chat
   const updatedChat = await prisma.chat.update({
     where: { id: chatId },
     data: {
@@ -663,31 +629,15 @@ const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
       participants: {
         select: {
           id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
-      },
-      lastMessage: {
-        include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
         },
       },
     },
   });
 
-  if (!updatedChat) {
-    throw new ApiError(500, "Failed to update the group chat");
-  }
+  // ⚡ Update Redis Cache
+  const participantIds = updatedChat.participants.map((p) => p.id);
+  await updateChatParticipantCache(chatId, participantIds);
 
-  // Emit new chat event to the added participant
   emitSocketEvent(
     req,
     participantId,
@@ -704,7 +654,6 @@ const addNewParticipantInGroupChat = asyncHandler(async (req, res) => {
 const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
   const { chatId, participantId } = req.params;
 
-  // Check if the chat is a group chat
   const groupChat = await prisma.chat.findUnique({
     where: { id: chatId },
     include: {
@@ -717,12 +666,10 @@ const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Group chat does not exist");
   }
 
-  // Check if the user performing the action is the group admin
   if (groupChat.adminId !== req.user.id) {
     throw new ApiError(403, "You are not an admin");
   }
 
-  // Check if the participant exists in the group
   const isParticipant = groupChat.participants.some(
     (participant) => participant.id === participantId
   );
@@ -731,7 +678,6 @@ const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Participant does not exist in the group chat");
   }
 
-  // Remove the participant from the group chat
   const updatedChat = await prisma.chat.update({
     where: { id: chatId },
     data: {
@@ -743,31 +689,15 @@ const removeParticipantFromGroupChat = asyncHandler(async (req, res) => {
       participants: {
         select: {
           id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
-      },
-      lastMessage: {
-        include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
         },
       },
     },
   });
 
-  if (!updatedChat) {
-    throw new ApiError(500, "Failed to update the group chat");
-  }
+  // ⚡ Update Redis Cache
+  const participantIds = updatedChat.participants.map((p) => p.id);
+  await updateChatParticipantCache(chatId, participantIds);
 
-  // Emit leave chat event to the removed participant
   emitSocketEvent(
     req,
     participantId,
