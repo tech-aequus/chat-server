@@ -15,6 +15,7 @@ import { redisClient } from "../utils/redisClient.js";
 import { uploadToS3, deleteFromS3 } from "../utils/s3utils.js";
 import { PrismaClient } from "@prisma/client";
 import { getChatParticipantIds } from "../utils/chatParticpantIds.js";
+import crypto from "crypto";
 
 const prisma = new PrismaClient();
 // /**
