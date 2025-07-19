@@ -78,19 +78,29 @@ const initializeSocketIO = (io) => {
         console.log(`📥 [SOCKET] User ${user.id} joined chat ${chatId}`);
         socket.join(chatId);
       });
-
       socket.on(ChatEventEnum.TYPING_EVENT, (chatId) => {
         console.log(
           `💬 [SOCKET] Typing event in chat ${chatId} by user ${user.id}`
         );
-        io.to(chatId).emit(ChatEventEnum.TYPING_EVENT, chatId);
+        io.to(chatId).emit(ChatEventEnum.TYPING_EVENT, {
+          chatId,
+          senderId: user.id,
+          userName: user.name || "Someone",
+        });
       });
 
       socket.on(ChatEventEnum.STOP_TYPING_EVENT, (chatId) => {
+        JSON.stringify({
+          chatId,
+        });
         console.log(
           `✋ [SOCKET] Stop typing in chat ${chatId} by user ${user.id}`
         );
-        io.to(chatId).emit(ChatEventEnum.STOP_TYPING_EVENT, chatId);
+        io.to(chatId).emit(ChatEventEnum.STOP_TYPING_EVENT, {
+          chatId,
+          senderId: user.id,
+          userName: user.name || "Someone",
+        });
       });
 
       socket.on(
