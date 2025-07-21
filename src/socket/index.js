@@ -83,14 +83,20 @@ const initializeSocketIO = (io) => {
         console.log(
           `💬 [SOCKET] Typing event in chat ${chatId} by user ${user.id}`
         );
-        io.to(chatId).emit(ChatEventEnum.TYPING_EVENT, chatId);
+        io.to(chatId).emit(ChatEventEnum.TYPING_EVENT, {
+          chatId,
+          senderId: user.id,
+        });
       });
 
       socket.on(ChatEventEnum.STOP_TYPING_EVENT, (chatId) => {
         console.log(
           `✋ [SOCKET] Stop typing in chat ${chatId} by user ${user.id}`
         );
-        io.to(chatId).emit(ChatEventEnum.STOP_TYPING_EVENT, chatId);
+        io.to(chatId).emit(ChatEventEnum.STOP_TYPING_EVENT, {
+          chatId,
+          senderId: user.id,
+        });
       });
 
       socket.on(
@@ -103,7 +109,7 @@ const initializeSocketIO = (io) => {
             `chat:${chatId}`,
             JSON.stringify({
               event: ChatEventEnum.MESSAGE_RECEIVED_EVENT,
-              data: { senderId: user.id, message },
+              data: message,
             })
           );
           console.log(`📡 [REDIS] Message published to chat:${chatId}`);
