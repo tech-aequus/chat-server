@@ -142,19 +142,30 @@ const sendMessage = asyncHandler(async (req, res) => {
     updatedAt: new Date().toISOString(),
   };
 
-  // ✅ Immediately emit message to all participants in chat room
+  // ✅ Handle attachments before emitting
+  if (req.files?.attachments?.length > 0) {
+    const attachmentUploads = req.files.attachments.map(async (file) => {
+      const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
+      const s3Url = await uploadToS3(file, key);
+      return { url: s3Url, key };
+    });
+
+    const uploadedAttachments = await Promise.all(attachmentUploads);
+    messageToStore.attachments = uploadedAttachments;
+  }
+
+  // ✅ Emit message only after attachments are ready
   emitSocketEvent(req, chatId, ChatEventEnum.MESSAGE_RECEIVED_EVENT, {
     ...messageToStore,
     clientMessageId,
   });
 
-  // ✅ Immediately respond to sender
+  // ✅ Respond to client with message including attachments
   res.status(201).json(new ApiResponse(201, messageToStore, "Message sent"));
 
-  // ⚙️ Background processing (non-blocking)
+  // ✅ Background storage (this can stay async)
   (async () => {
     try {
-      // Cache message in Redis (latest 50)
       await Promise.allSettled([
         redisClient.lpush(
           `chat:${chatId}:messages`,
@@ -163,30 +174,6 @@ const sendMessage = asyncHandler(async (req, res) => {
         redisClient.ltrim(`chat:${chatId}:messages`, 0, 49),
       ]);
 
-      // Handle attachments (upload to S3)
-      if (req.files?.attachments?.length > 0) {
-        const attachmentUploads = req.files.attachments.map(async (file) => {
-          const key = `chats/${chatId}/messages/${Date.now()}-${file.originalname}`;
-          const s3Url = await uploadToS3(file, key);
-          return { url: s3Url, key };
-        });
-
-        const uploadedAttachments = await Promise.all(attachmentUploads);
-        messageToStore.attachments = uploadedAttachments;
-
-        // Optional: Emit update once attachments are uploaded
-        emitSocketEvent(
-          req,
-          chatId,
-          ChatEventEnum.MESSAGE_ATTACHMENT_UPDATE_EVENT,
-          {
-            messageId: messageToStore.id,
-            attachments: uploadedAttachments,
-          }
-        );
-      }
-
-      // Save message in DB
       await prisma.chatMessage.create({
         data: {
           id: messageToStore.id,
@@ -201,7 +188,6 @@ const sendMessage = asyncHandler(async (req, res) => {
         },
       });
 
-      // Update chat's last message
       await prisma.chat.update({
         where: { id: chatId },
         data: { lastMessageId: messageToStore.id },

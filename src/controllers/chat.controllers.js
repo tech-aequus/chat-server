@@ -746,6 +746,7 @@ const getAllChats = asyncHandler(async (req, res) => {
               image: true,
             },
           },
+          attachments: true,
         },
       },
       admin: {
