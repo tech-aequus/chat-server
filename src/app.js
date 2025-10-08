@@ -88,16 +88,15 @@ app.use("/api/v1/users", userRouter);
 app.use("/api/v1/chat-app/chats", chatRouter);
 app.post("/api/v1/isEmailVerified", async (req, res) => {
   const { email } = req.body;
-  console.log(email);
   try {
     const isEmailVerified = await isEmailRegistered(email);
-    console.log("line hit");
     if (isEmailVerified) {
       res.status(200).json({ isEmailVerified: true });
     } else {
       res.status(200).json({ isEmailVerified: false });
     }
   } catch (error) {
+    logger.error("Error checking email verification:", error);
     res
       .status(500)
       .json({ error: "An error occurred while checking the email" });

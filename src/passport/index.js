@@ -4,6 +4,7 @@ import { User } from "../models/auth/user.models.js";
 import { UserLoginType, UserRolesEnum } from "../constants.js";
 import { ApiError } from "../utils/ApiError.js";
 import { Strategy as GitHubStrategy } from "passport-github2";
+import logger from "../logger/winston.logger.js";
 
 try {
   passport.serializeUser((user, next) => {
@@ -149,5 +150,5 @@ try {
     )
   );
 } catch (error) {
-  console.error("PASSPORT ERROR: ", error);
+  logger.error("PASSPORT ERROR: ", error);
 }

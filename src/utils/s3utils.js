@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import logger from "../logger/winston.logger.js";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
@@ -14,7 +15,7 @@ const s3Client = new S3Client({
 
 export const uploadToS3 = async (file, key) => {
   try {
-    console.log("Starting S3 upload with:", {
+    logger.debug("Starting S3 upload with:", {
       bucket: process.env.AWS_BUCKET_NAME,
       key,
       fileSize: file.buffer.length,
@@ -30,15 +31,15 @@ export const uploadToS3 = async (file, key) => {
     });
 
     const result = await s3Client.send(command);
-    console.log("S3 upload result:", result);
+    logger.debug("S3 upload result:", result);
 
     // Construct the URL
     const s3Url = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-    console.log("Generated S3 URL:", s3Url);
+    logger.debug("Generated S3 URL:", s3Url);
 
     return s3Url;
   } catch (error) {
-    console.error("Detailed S3 upload error:", {
+    logger.error("Detailed S3 upload error:", {
       errorMessage: error.message,
       errorCode: error.code,
       errorStack: error.stack,
@@ -57,7 +58,7 @@ export const deleteFromS3 = async (key) => {
 
     await s3Client.send(deleteCommand);
   } catch (error) {
-    console.error("Error deleting from S3:", error);
+    logger.error("Error deleting from S3:", error);
     throw error;
   }
 };

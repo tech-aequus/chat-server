@@ -18,7 +18,7 @@ const isEmailRegistered = async (email) => {
     });
     return !!user; // Return true if user exists, false otherwise
   } catch (error) {
-    console.error("Error checking email registration:", error);
+    logger.error("Error checking email registration:", error);
     return false;
   }
 };
@@ -46,12 +46,11 @@ const deleteCascadeChatMessages = async (chatId) => {
     if (attachment.localPath) {
       removeLocalFile(attachment.localPath);
     } else {
-      console.warn("Attachment missing localPath:", attachment);
+      logger.warn("Attachment missing localPath:", attachment);
     }
   });
 
   const messageIds = messages.map((message) => message.id).filter(Boolean); // Filter out undefined values
-  console.log("Message IDs to delete:", messageIds);
   await prisma.messageAttachment.deleteMany({
     where: {
       id: {
@@ -248,7 +247,7 @@ const createAGroupChat = asyncHandler(async (req, res) => {
       .status(201)
       .json(new ApiResponse(201, groupChat, "Group chat created successfully"));
   } catch (error) {
-    console.error("Error creating group chat:", error);
+    logger.error("Error creating group chat:", error);
     throw new ApiError(500, "Failed to create group chat");
   }
 });
@@ -306,7 +305,7 @@ const createAFactionGroupChat = asyncHandler(async (req, res) => {
       .status(201)
       .json(new ApiResponse(201, groupChat, "Group chat created successfully"));
   } catch (error) {
-    console.error("Error creating faction group chat:", error);
+    logger.error("Error creating faction group chat:", error);
     throw new ApiError(500, "Failed to create faction group chat");
   }
 });
@@ -527,7 +526,6 @@ const deleteOneOnOneChat = asyncHandler(async (req, res) => {
 const leaveGroupChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  console.log(req.params);
   // Check if the chat is a group chat
   const groupChat = await prisma.chat.findUnique({
     where: { id: chatId },

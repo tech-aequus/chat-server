@@ -5,7 +5,7 @@ const cleanupRedisForChat = async (chatId) => {
   try {
     // Get all message keys for this chat
     const messageKeys = await redisClient.keys(`chat:${chatId}:messages*`);
-    console.log("yash", `chat:${chatId}:messages*`);
+    logger.debug(`Redis cleanup for chat: ${chatId}:messages*`);
     if (messageKeys.length > 0) {
       // Delete all message keys for this chat
       await redisClient.del(messageKeys);

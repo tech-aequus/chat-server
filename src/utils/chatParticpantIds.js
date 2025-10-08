@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { redisClient } from "./redisClient.js";
+import logger from "../logger/winston.logger.js";
 
 const prisma = new PrismaClient();
 
@@ -10,12 +11,12 @@ const prisma = new PrismaClient();
  * @returns {Promise<string[]>} participant IDs
  */
 export const getChatParticipantIds = async (chatId) => {
-  console.log("Fetching participant IDs for chat:", chatId);
+  logger.debug("Fetching participant IDs for chat:", chatId);
   const cacheKey = `chat:${chatId}:participants`;
 
   let cached = await redisClient.get(cacheKey);
 
-  console.log("Cached participant IDs:", cached);
+  logger.debug("Cached participant IDs:", cached);
 
   if (cached) {
     return JSON.parse(cached);
@@ -48,7 +49,7 @@ export const getChatParticipantIds = async (chatId) => {
  */
 export const updateChatParticipantCache = async (chatId, participantIds) => {
   const cacheKey = `chat:${chatId}:participants`;
-  console.log("Updating participant cache for chat:", chatId, participantIds);
+  logger.debug("Updating participant cache for chat:", chatId, participantIds);
 
   // Fixed syntax
   await redisClient.set(cacheKey, JSON.stringify(participantIds), "EX", 3600);

@@ -52,11 +52,8 @@ const chatMessageCommonAggregation = () => {
 const getAllMessages = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
 
-  console.log("Fetching messages for chat:", chatId);
-
   // ✅ Fetch participants via Redis or DB
   const participants = await getChatParticipantIds(chatId);
-  console.log("Participants fetched:", participants);
   if (!participants || participants.length === 0) {
     throw new ApiError(404, "Chat does not exist");
   }
@@ -193,7 +190,7 @@ const sendMessage = asyncHandler(async (req, res) => {
         data: { lastMessageId: messageToStore.id },
       });
     } catch (error) {
-      console.error("Background error (sendMessage):", error);
+      logger.error("Background error (sendMessage):", error);
     }
   })();
 });
