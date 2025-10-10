@@ -16,6 +16,7 @@ import { uploadToS3, deleteFromS3 } from "../utils/s3utils.js";
 import { PrismaClient } from "@prisma/client";
 import { getChatParticipantIds } from "../utils/chatParticpantIds.js";
 import crypto from "crypto";
+import logger from "../logger/winston.logger.js";
 
 const prisma = new PrismaClient();
 // /**
@@ -152,9 +153,18 @@ const sendMessage = asyncHandler(async (req, res) => {
   }
 
   // ✅ Emit message only after attachments are ready
+  // Emit to the chat room (for active chat participants)
   emitSocketEvent(req, chatId, ChatEventEnum.MESSAGE_RECEIVED_EVENT, {
     ...messageToStore,
     clientMessageId,
+  });
+
+  // ✅ Also emit to each participant's room (for sidebar updates)
+  participantIds.forEach((participantId) => {
+    emitSocketEvent(req, participantId, ChatEventEnum.MESSAGE_RECEIVED_EVENT, {
+      ...messageToStore,
+      clientMessageId,
+    });
   });
 
   // ✅ Respond to client with message including attachments
