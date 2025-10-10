@@ -3,6 +3,8 @@ import {
   deleteMessage,
   getAllMessages,
   sendMessage,
+  markMessagesAsRead,
+  getUnreadCount,
 } from "../controllers/message.controllers.js";
 import { verifyJWT } from "../middlewares/auth.middlewares.js";
 import { upload } from "../middlewares/multer.middlewares.js";
@@ -24,6 +26,15 @@ router
     validate,
     sendMessage
   );
+
+// New routes for read status
+router
+  .route("/:chatId/read")
+  .post(mongoIdPathVariableValidator("chatId"), validate, markMessagesAsRead);
+
+router
+  .route("/:chatId/unread-count")
+  .get(mongoIdPathVariableValidator("chatId"), validate, getUnreadCount);
 
 router
   .route("/:chatId/:messageId")

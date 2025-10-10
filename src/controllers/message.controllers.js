@@ -294,5 +294,150 @@ const deleteMessage = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, { messageId }, "Message deleted successfully"));
 });
+const markMessagesAsRead = asyncHandler(async (req, res) => {
+  const { chatId } = req.params;
+  const { messageIds } = req.body; // Array of message IDs to mark as read
 
-export { getAllMessages, sendMessage, deleteMessage };
+  // Check if user is part of the chat
+  const participants = await getChatParticipantIds(chatId);
+  if (!participants.includes(req.user.id)) {
+    throw new ApiError(403, "You are not part of this chat");
+  }
+
+  try {
+    // Mark messages as read (upsert to handle duplicate reads)
+    const readStatuses = await Promise.all(
+      messageIds.map(async (messageId) => {
+        return await prisma.messageReadStatus.upsert({
+          where: {
+            messageId_userId: {
+              messageId,
+              userId: req.user.id,
+            },
+          },
+          update: {
+            readAt: new Date(),
+          },
+          create: {
+            id: crypto.randomUUID(),
+            messageId,
+            userId: req.user.id,
+            readAt: new Date(),
+          },
+        });
+      })
+    );
+
+    // Update last read message in chat for this user
+    const lastMessageId = messageIds[messageIds.length - 1]; // Assuming messages are ordered
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { lastReadMessageData: true },
+    });
+
+    const lastReadData = chat?.lastReadMessageData || {};
+    lastReadData[req.user.id] = lastMessageId;
+
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        lastReadMessageData: lastReadData,
+      },
+    });
+
+    // Emit read status update to other participants
+    participants.forEach((participantId) => {
+      if (participantId !== req.user.id) {
+        emitSocketEvent(req, participantId, ChatEventEnum.MESSAGES_READ_EVENT, {
+          chatId,
+          userId: req.user.id,
+          messageIds,
+          readAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { readCount: readStatuses.length },
+          "Messages marked as read"
+        )
+      );
+  } catch (error) {
+    logger.error("Error marking messages as read:", error);
+    throw new ApiError(500, "Failed to mark messages as read");
+  }
+});
+
+const getUnreadCount = asyncHandler(async (req, res) => {
+  const { chatId } = req.params;
+
+  // Check if user is part of the chat
+  const participants = await getChatParticipantIds(chatId);
+  if (!participants.includes(req.user.id)) {
+    throw new ApiError(403, "You are not part of this chat");
+  }
+
+  try {
+    // Get user's last read message
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { lastReadMessageData: true },
+    });
+
+    const lastReadData = chat?.lastReadMessageData || {};
+    const lastReadMessageId = lastReadData[req.user.id];
+
+    let unreadCount = 0;
+
+    if (lastReadMessageId) {
+      // Count messages after the last read message
+      const lastReadMessage = await prisma.chatMessage.findUnique({
+        where: { id: lastReadMessageId },
+        select: { createdAt: true },
+      });
+
+      if (lastReadMessage) {
+        unreadCount = await prisma.chatMessage.count({
+          where: {
+            chatId,
+            createdAt: { gt: lastReadMessage.createdAt },
+            senderId: { not: req.user.id }, // Don't count user's own messages
+          },
+        });
+      }
+    } else {
+      // No read messages yet, count all messages except user's own
+      unreadCount = await prisma.chatMessage.count({
+        where: {
+          chatId,
+          senderId: { not: req.user.id },
+        },
+      });
+    }
+
+    res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { unreadCount },
+          "Unread count fetched successfully"
+        )
+      );
+  } catch (error) {
+    logger.error("Error getting unread count:", error);
+    throw new ApiError(500, "Failed to get unread count");
+  }
+});
+
+export {
+  getAllMessages,
+  sendMessage,
+  deleteMessage,
+  markMessagesAsRead,
+  getUnreadCount,
+};

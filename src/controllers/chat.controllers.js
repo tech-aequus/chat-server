@@ -756,10 +756,77 @@ const getAllChats = asyncHandler(async (req, res) => {
     },
   });
 
+  // Calculate unread counts for each chat
+  const chatsWithUnreadCount = await Promise.all(
+    chats.map(async (chat) => {
+      let unreadCount = 0;
+
+      try {
+        // Get user's last read message for this chat
+        const lastReadData = chat.lastReadMessageData || {};
+        const lastReadMessageId = lastReadData[userId];
+
+        console.log(`Debug - Chat ${chat.id}:`);
+        console.log(`- lastReadData:`, lastReadData);
+        console.log(
+          `- lastReadMessageId for user ${userId}:`,
+          lastReadMessageId
+        );
+
+        if (lastReadMessageId) {
+          // Count messages after the last read message
+          const lastReadMessage = await prisma.chatMessage.findUnique({
+            where: { id: lastReadMessageId },
+            select: { createdAt: true },
+          });
+
+          console.log(`- lastReadMessage:`, lastReadMessage);
+
+          if (lastReadMessage) {
+            unreadCount = await prisma.chatMessage.count({
+              where: {
+                chatId: chat.id,
+                createdAt: { gt: lastReadMessage.createdAt },
+                senderId: { not: userId }, // Don't count user's own messages
+              },
+            });
+
+            console.log(`- unreadCount (after lastRead):`, unreadCount);
+          }
+        } else {
+          // No read messages yet, count all messages except user's own
+          unreadCount = await prisma.chatMessage.count({
+            where: {
+              chatId: chat.id,
+              senderId: { not: userId },
+            },
+          });
+
+          console.log(`- unreadCount (no lastRead):`, unreadCount);
+        }
+      } catch (error) {
+        console.error(
+          `Error calculating unread count for chat ${chat.id}:`,
+          error
+        );
+        unreadCount = 0;
+      }
+
+      return {
+        ...chat,
+        unreadCount,
+      };
+    })
+  );
+
   return res
     .status(200)
     .json(
-      new ApiResponse(200, chats || [], "User chats fetched successfully!")
+      new ApiResponse(
+        200,
+        chatsWithUnreadCount || [],
+        "User chats fetched successfully!"
+      )
     );
 });
 const getChat = asyncHandler(async (req, res) => {
